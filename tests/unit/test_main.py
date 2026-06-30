@@ -24,8 +24,9 @@ def _settings(is_live: bool = False, **overrides) -> MagicMock:
     s = MagicMock()
     s.is_live  = is_live
     s.is_paper = not is_live
-    s.mode.value = "live" if is_live else "paper"
-    s.log_level.value     = "INFO"
+    s.mode.value      = "live" if is_live else "paper"
+    s.connector.value = "ccxt"
+    s.log_level.value = "INFO"
     s.exchange            = "binance"
     s.symbol              = "BTC/USDT"
     s.timeframe           = "1h"
@@ -57,8 +58,7 @@ def _run(settings=None, mock_engine=None):
 
     with patch("zeus.main.get_settings", return_value=settings), \
          patch("zeus.main.setup_logger"), \
-         patch("zeus.main.ccxt"), \
-         patch("zeus.main.LiveConnector", return_value=mock_connector), \
+         patch("zeus.main.create_market_connector", return_value=mock_connector), \
          patch("zeus.main.SMCStrategy"), \
          patch("zeus.main.PaperEngine", return_value=mock_engine), \
          patch("zeus.main.signal"):
@@ -121,8 +121,7 @@ class TestPaperModeLifecycle:
 
         with patch("zeus.main.get_settings", return_value=_settings()), \
              patch("zeus.main.setup_logger"), \
-             patch("zeus.main.ccxt"), \
-             patch("zeus.main.LiveConnector", return_value=mock_connector), \
+             patch("zeus.main.create_market_connector", return_value=mock_connector), \
              patch("zeus.main.SMCStrategy"), \
              patch("zeus.main.PaperEngine", return_value=mock_engine), \
              patch("zeus.main.signal"), \
@@ -144,8 +143,7 @@ class TestEngineWiring:
 
         with patch("zeus.main.get_settings", return_value=s), \
              patch("zeus.main.setup_logger"), \
-             patch("zeus.main.ccxt"), \
-             patch("zeus.main.LiveConnector", return_value=mock_connector), \
+             patch("zeus.main.create_market_connector", return_value=mock_connector), \
              patch("zeus.main.SMCStrategy"), \
              patch("zeus.main.PaperEngine") as MockEngine, \
              patch("zeus.main.signal"):
@@ -197,8 +195,7 @@ class TestSignalHandling:
 
         with patch("zeus.main.get_settings", return_value=_settings()), \
              patch("zeus.main.setup_logger"), \
-             patch("zeus.main.ccxt"), \
-             patch("zeus.main.LiveConnector", return_value=mock_connector), \
+             patch("zeus.main.create_market_connector", return_value=mock_connector), \
              patch("zeus.main.SMCStrategy"), \
              patch("zeus.main.PaperEngine", return_value=mock_engine), \
              patch("zeus.main.signal") as mock_sig:
@@ -219,8 +216,7 @@ class TestSignalHandling:
 
         with patch("zeus.main.get_settings", return_value=_settings()), \
              patch("zeus.main.setup_logger"), \
-             patch("zeus.main.ccxt"), \
-             patch("zeus.main.LiveConnector", return_value=mock_connector), \
+             patch("zeus.main.create_market_connector", return_value=mock_connector), \
              patch("zeus.main.SMCStrategy"), \
              patch("zeus.main.PaperEngine", return_value=mock_engine), \
              patch("zeus.main.signal") as mock_sig:

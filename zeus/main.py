@@ -6,11 +6,15 @@ Only PAPER mode is supported until live paper-trading validation is complete.
 
 Usage:
     python -m zeus.main
-    ZEUS_SYMBOL=ETH/USDT ZEUS_TIMEFRAME=15m zeus
+    ZEUS_SYMBOL=XAUUSD ZEUS_TIMEFRAME=1h ZEUS_CONNECTOR=mt5 zeus
 
 Key environment variables (full list in zeus/config.py):
     ZEUS_MODE                 paper | live        (default: paper)
-    ZEUS_EXCHANGE             ccxt exchange id    (default: binance)
+    ZEUS_CONNECTOR            ccxt | mt5          (default: ccxt)
+    ZEUS_EXCHANGE             ccxt exchange id    (default: binance, ccxt only)
+    ZEUS_MT5_LOGIN            MT5 account number  (mt5 only)
+    ZEUS_MT5_PASSWORD         MT5 password        (mt5 only)
+    ZEUS_MT5_SERVER           MT5 broker server   (mt5 only)
     ZEUS_SYMBOL               trading pair        (default: BTC/USDT)
     ZEUS_TIMEFRAME            OHLCV timeframe     (default: 1h)
     ZEUS_PAPER_BALANCE        starting capital    (default: 10000)
@@ -28,10 +32,8 @@ from __future__ import annotations
 import signal
 import sys
 
-import ccxt
-
 from zeus.config import get_settings
-from zeus.exchange.live import LiveConnector
+from zeus.exchange.factory import create_market_connector
 from zeus.paper.engine import PaperEngine
 from zeus.strategy.smc_strategy import SMCStrategy
 from zeus.utils.logger import logger, setup_logger
@@ -52,20 +54,16 @@ def main() -> None:
     logger.info(
         "Zeus paper trading bot starting",
         mode=settings.mode.value,
+        connector=settings.connector.value,
         symbol=settings.symbol,
         timeframe=settings.timeframe,
-        exchange=settings.exchange,
         balance=settings.paper_balance,
         stop_loss_pct=settings.stop_loss_pct,
         take_profit_pct=settings.take_profit_pct,
         poll_interval_s=settings.poll_interval_seconds,
     )
 
-    # Read-only CCXT exchange for public market data (no API keys needed)
-    exchange_cls = getattr(ccxt, settings.exchange)
-    ccxt_ex = exchange_cls({"enableRateLimit": True})
-    market_connector = LiveConnector(exchange=ccxt_ex)
-
+    market_connector = create_market_connector(settings)
     strategy = SMCStrategy(min_score=settings.smc_min_score)
 
     engine = PaperEngine(

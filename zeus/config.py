@@ -15,6 +15,11 @@ class Mode(str, Enum):
     LIVE = "live"
 
 
+class ConnectorType(str, Enum):
+    CCXT = "ccxt"
+    MT5 = "mt5"
+
+
 class LogLevel(str, Enum):
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -33,26 +38,36 @@ class Settings(BaseSettings):
     # Execution mode
     mode: Mode = Mode.PAPER
 
-    # Exchange
-    exchange: str = "binance"
-    api_key: str = ""
+    # Connector type (ccxt for crypto, mt5 for Forex/CFD)
+    connector: ConnectorType = ConnectorType.CCXT
+
+    # CCXT exchange settings
+    exchange:   str = "binance"
+    api_key:    str = ""
     api_secret: str = ""
-    symbol: str = "BTC/USDT"
+
+    # MT5 credentials
+    mt5_login:    int = 0
+    mt5_password: str = ""
+    mt5_server:   str = ""
+
+    # Instrument
+    symbol:    str = "BTC/USDT"
     timeframe: str = "1h"
 
     # Risk
-    max_position_pct: float = Field(default=0.02, gt=0, le=1)
-    stop_loss_pct: float = Field(default=0.01, gt=0, le=1)
-    take_profit_pct: float = Field(default=0.02, gt=0, le=1)
+    max_position_pct:  float = Field(default=0.02, gt=0, le=1)
+    stop_loss_pct:     float = Field(default=0.01, gt=0, le=1)
+    take_profit_pct:   float = Field(default=0.02, gt=0, le=1)
     max_daily_loss_pct: float = Field(default=0.05, gt=0, le=1)
 
     # Paper trading
     paper_balance: float = Field(default=10_000.0, gt=0)
 
     # Engine
-    ohlcv_limit:          int   = Field(default=500,  ge=100)
+    ohlcv_limit:           int   = Field(default=500,  ge=100)
     poll_interval_seconds: float = Field(default=60.0, gt=0)
-    max_open_positions:   int   = Field(default=3,    ge=1)
+    max_open_positions:    int   = Field(default=3,    ge=1)
 
     # Strategy
     smc_min_score: float = Field(default=4.0, ge=1.0, le=10.0)
@@ -70,8 +85,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def live_mode_requires_credentials(self) -> "Settings":
-        if self.mode == Mode.LIVE and (not self.api_key or not self.api_secret):
-            raise ValueError("ZEUS_API_KEY and ZEUS_API_SECRET are required in live mode")
+        if self.mode == Mode.LIVE:
+            if self.connector == ConnectorType.CCXT:
+                if not self.api_key or not self.api_secret:
+                    raise ValueError(
+                        "ZEUS_API_KEY and ZEUS_API_SECRET are required in live mode"
+                    )
+            elif self.connector == ConnectorType.MT5:
+                if not self.mt5_login or not self.mt5_password or not self.mt5_server:
+                    raise ValueError(
+                        "ZEUS_MT5_LOGIN, ZEUS_MT5_PASSWORD, ZEUS_MT5_SERVER "
+                        "are required in live mode with MT5 connector"
+                    )
         return self
 
     @property
@@ -81,6 +106,11 @@ class Settings(BaseSettings):
     @property
     def is_paper(self) -> bool:
         return self.mode == Mode.PAPER
+
+    @property
+    def mt5_symbol(self) -> str:
+        """MT5 symbol format (no slash): 'XAU/USD' → 'XAUUSD'."""
+        return self.symbol.replace("/", "").replace(" ", "")
 
 
 @lru_cache(maxsize=1)

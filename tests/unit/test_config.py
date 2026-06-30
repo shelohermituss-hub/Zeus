@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from zeus.config import Mode, Settings
+from zeus.config import ConnectorType, Mode, Settings
 
 
 def make_settings(**overrides) -> Settings:
@@ -135,3 +135,64 @@ class TestStrategyDefaults:
     def test_smc_min_score_10_is_valid(self):
         s = make_settings(smc_min_score=10.0)
         assert s.smc_min_score == pytest.approx(10.0)
+
+
+class TestConnectorType:
+    def test_default_connector_is_ccxt(self):
+        s = make_settings()
+        assert s.connector == ConnectorType.CCXT
+
+    def test_mt5_connector_accepted(self):
+        s = make_settings(connector="mt5")
+        assert s.connector == ConnectorType.MT5
+
+    def test_invalid_connector_raises(self):
+        with pytest.raises(ValidationError):
+            make_settings(connector="fix")
+
+    def test_mt5_symbol_strips_slash(self):
+        s = make_settings(symbol="XAU/USD")
+        assert s.mt5_symbol == "XAUUSD"
+
+    def test_mt5_symbol_no_slash_unchanged(self):
+        s = make_settings(symbol="GBPUSD")
+        assert s.mt5_symbol == "GBPUSD"
+
+    def test_mt5_symbol_us30(self):
+        s = make_settings(symbol="US30")
+        assert s.mt5_symbol == "US30"
+
+
+class TestMT5Credentials:
+    def test_mt5_live_without_credentials_raises(self):
+        with pytest.raises(
+            ValidationError,
+            match="ZEUS_MT5_LOGIN, ZEUS_MT5_PASSWORD, ZEUS_MT5_SERVER",
+        ):
+            make_settings(
+                mode="live",
+                connector="mt5",
+                mt5_login=0,
+                mt5_password="",
+                mt5_server="",
+            )
+
+    def test_mt5_live_with_credentials_ok(self):
+        s = make_settings(
+            mode="live",
+            connector="mt5",
+            mt5_login=123456,
+            mt5_password="secret",
+            mt5_server="Demo-Server",
+        )
+        assert s.is_live
+        assert s.mt5_login == 123456
+
+    def test_mt5_paper_without_credentials_ok(self):
+        # Paper mode never needs credentials
+        s = make_settings(connector="mt5", mode="paper")
+        assert s.is_paper
+
+    def test_ccxt_live_still_requires_api_keys(self):
+        with pytest.raises(ValidationError, match="ZEUS_API_KEY and ZEUS_API_SECRET"):
+            make_settings(mode="live", connector="ccxt", api_key="", api_secret="")
