@@ -118,21 +118,22 @@ class SMCStrategy(Strategy):
         if cs is None:
             return Signal(SignalType.NONE, 0.0, "no confluent signal", bar_index)
 
-        return self._signal_from_score(cs, bar_index)
+        return self._signal_from_score(cs, bar_index, self.min_score)
 
     # ------------------------------------------------------------------ #
     # Private helpers                                                      #
     # ------------------------------------------------------------------ #
 
     @staticmethod
-    def _signal_from_score(cs: ConfluenceScore, bar_index: int) -> Signal:
+    def _signal_from_score(cs: ConfluenceScore, bar_index: int, min_score: float = 4.0) -> Signal:
         """Convert a tradeable ConfluenceScore to a Signal."""
         stype = SignalType.LONG if cs.direction == BULLISH else SignalType.SHORT
 
         active_names    = [f.name for f in cs.factors if f.active]
         direction_label = "BULLISH" if cs.direction == BULLISH else "BEARISH"
+        grade = cs.grade(min_score=min_score)
         reason = (
-            f"{direction_label} score={cs.active_count}/10 "
+            f"{direction_label} grade={grade.value} score={cs.active_count}/10 "
             f"[{', '.join(active_names)}]"
         )
 

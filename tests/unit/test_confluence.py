@@ -36,6 +36,7 @@ from zeus.strategy.smc.volume_profile import VolumeProfile
 from zeus.strategy.confluence import (
     ConfluenceScore,
     FactorResult,
+    PatternGrade,
     best_confluence,
     score_confluence,
 )
@@ -280,6 +281,72 @@ class TestConfluenceScore:
         cs = self._make([1, 8])   # score=2
         assert cs.is_tradeable(min_score=2.0) is True
         assert cs.is_tradeable(min_score=3.0) is False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Pattern quality grading
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestPatternGrade:
+    def _make(self, active_ids: list[int]) -> ConfluenceScore:
+        """Build a ConfluenceScore with exactly the given factor IDs active."""
+        factors = [
+            FactorResult(i + 1, f"F{i+1}", (i + 1) in active_ids)
+            for i in range(10)
+        ]
+        return ConfluenceScore(direction=BULLISH, price=100.0, bar_index=5, factors=factors)
+
+    def test_f_grade_when_gate_missing(self):
+        cs = self._make([2, 3, 4, 5, 6, 7, 8, 9, 10])  # 9 active, no F1 gate
+        assert cs.grade() == PatternGrade.F
+
+    def test_f_grade_when_score_below_min(self):
+        cs = self._make([1, 8, 2])  # score=3 < default min_score=4
+        assert cs.grade() == PatternGrade.F
+
+    def test_c_grade_at_min_score(self):
+        cs = self._make([1, 8, 2, 3])  # score=4, below default b_threshold=6
+        assert cs.grade() == PatternGrade.C
+
+    def test_b_grade_at_b_threshold(self):
+        cs = self._make([1, 8, 2, 3, 4, 5])  # score=6, below default a_threshold=8
+        assert cs.grade() == PatternGrade.B
+
+    def test_a_grade_at_a_threshold(self):
+        cs = self._make([1, 8, 2, 3, 4, 5, 6, 7])  # score=8
+        assert cs.grade() == PatternGrade.A
+
+    def test_a_grade_at_full_score(self):
+        cs = self._make(list(range(1, 11)))  # score=10
+        assert cs.grade() == PatternGrade.A
+
+    def test_grade_respects_custom_thresholds(self):
+        cs = self._make([1, 8, 2, 3, 4])  # score=5
+        assert cs.grade(min_score=4.0, b_threshold=5.0, a_threshold=9.0) == PatternGrade.B
+        assert cs.grade(min_score=4.0, b_threshold=6.0, a_threshold=9.0) == PatternGrade.C
+
+    def test_grade_rejects_a_threshold_below_b_threshold(self):
+        cs = self._make([1, 8])
+        with pytest.raises(ValueError):
+            cs.grade(b_threshold=8.0, a_threshold=6.0)
+
+    def test_grade_with_min_score_above_b_threshold_skips_c(self):
+        """A strict min_score can make the C tier unreachable without raising."""
+        cs = self._make([1, 8, 2, 3, 4, 5, 6])  # score=7
+        grade = cs.grade(min_score=7.0, b_threshold=6.0, a_threshold=8.0)
+        assert grade == PatternGrade.B
+
+    def test_grade_is_never_better_than_is_tradeable_allows(self):
+        """Grading must never disagree with the gate check (fail-closed)."""
+        cs = self._make([2, 3, 4, 5, 6, 7, 8, 9, 10])  # high score, no F1 gate
+        assert cs.is_tradeable(min_score=4.0) is False
+        assert cs.grade(min_score=4.0) == PatternGrade.F
+
+    def test_pattern_grade_string_values(self):
+        assert PatternGrade.A.value == "A"
+        assert PatternGrade.B.value == "B"
+        assert PatternGrade.C.value == "C"
+        assert PatternGrade.F.value == "F"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

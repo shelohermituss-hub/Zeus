@@ -25,6 +25,7 @@ against the trend or without an internal trigger.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 from zeus.strategy.smc.fibonacci import get_latest_fib_zone
 from zeus.strategy.smc.fvg import get_active_fvgs
@@ -46,6 +47,22 @@ class FactorResult:
     name:      str
     active:    bool   # True when this factor aligns with the trade direction
     detail:    str = ""
+
+
+class PatternGrade(str, Enum):
+    """
+    Setup quality tier derived from a ConfluenceScore.
+
+    F means not tradeable (a gate factor is missing or the score is below
+    min_score) — an F-graded setup must never be sized or entered. A/B/C
+    only ever apply to tradeable setups, ranked by how many of the 10
+    factors aligned, so downstream code (position sizing, filtering) can
+    treat the grade as a strict quality ordering: A > B > C > F.
+    """
+    A = "A"
+    B = "B"
+    C = "C"
+    F = "F"
 
 
 @dataclass(frozen=True)
@@ -101,6 +118,43 @@ class ConfluenceScore:
             and self.has_entry_confirmation
             and self.score >= min_score
         )
+
+    def grade(
+        self,
+        min_score:   float = 4.0,
+        b_threshold: float = 6.0,
+        a_threshold: float = 8.0,
+    ) -> PatternGrade:
+        """
+        Classify this setup into a quality tier (A/B/C/F).
+
+        F is returned whenever is_tradeable(min_score) is False — grading
+        a non-tradeable setup A, B, or C would let downstream code size or
+        enter a trade that the gate logic already rejected, so the two
+        checks must never disagree (fail-closed).
+
+        Args:
+            min_score:   Same threshold passed to is_tradeable() — the floor
+                         for any non-F grade. May exceed b_threshold (e.g. a
+                         strategy configured with a strict min_score simply
+                         never produces a C grade — that tier becomes
+                         unreachable, not invalid).
+            b_threshold: Minimum score for a B grade.
+            a_threshold: Minimum score for an A grade (the top tier). Must
+                         be >= b_threshold.
+        """
+        if a_threshold < b_threshold:
+            raise ValueError(
+                "a_threshold must be >= b_threshold "
+                f"(got b_threshold={b_threshold}, a_threshold={a_threshold})"
+            )
+        if not self.is_tradeable(min_score):
+            return PatternGrade.F
+        if self.score >= a_threshold:
+            return PatternGrade.A
+        if self.score >= b_threshold:
+            return PatternGrade.B
+        return PatternGrade.C
 
 
 # ──────────────────────────────────────────────────────────────────────────────

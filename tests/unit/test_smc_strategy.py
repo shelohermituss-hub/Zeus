@@ -167,6 +167,21 @@ class TestSignalFromScore:
         sig = SMCStrategy._signal_from_score(cs, bar_index=0)
         assert isinstance(sig.reason, str)
 
+    def test_reason_includes_grade_c_at_default_min_score(self):
+        cs = _make_score(BULLISH, [1, 8, 2, 3])  # score=4
+        sig = SMCStrategy._signal_from_score(cs, bar_index=0)
+        assert "grade=C" in sig.reason
+
+    def test_reason_includes_grade_a_at_full_score(self):
+        cs = _make_score(BULLISH, list(range(1, 11)))  # score=10
+        sig = SMCStrategy._signal_from_score(cs, bar_index=0)
+        assert "grade=A" in sig.reason
+
+    def test_reason_grade_uses_passed_min_score(self):
+        cs = _make_score(BULLISH, [1, 8, 2])  # score=3
+        sig = SMCStrategy._signal_from_score(cs, bar_index=0, min_score=3.0)
+        assert "grade=C" in sig.reason
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # generate_signal — insufficient-data guard
