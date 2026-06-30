@@ -32,7 +32,7 @@ from __future__ import annotations
 import signal
 import sys
 
-from zeus.config import get_settings
+from zeus.config import ConnectorType, get_settings
 from zeus.exchange.factory import create_market_connector
 from zeus.paper.engine import PaperEngine
 from zeus.strategy.smc_strategy import SMCStrategy
@@ -66,11 +66,18 @@ def main() -> None:
     market_connector = create_market_connector(settings)
     strategy = SMCStrategy(min_score=settings.smc_min_score)
 
+    # MT5 requires symbol names without slash ("XAUUSD", not "XAU/USD")
+    symbol = (
+        settings.mt5_symbol
+        if settings.connector == ConnectorType.MT5
+        else settings.symbol
+    )
+
     engine = PaperEngine(
         strategy=strategy,
         market_connector=market_connector,
         initial_balance=settings.paper_balance,
-        symbol=settings.symbol,
+        symbol=symbol,
         timeframe=settings.timeframe,
         ohlcv_limit=settings.ohlcv_limit,
         poll_interval=settings.poll_interval_seconds,
