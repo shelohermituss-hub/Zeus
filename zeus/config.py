@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # Paper trading
     paper_balance: float = Field(default=10_000.0, gt=0)
 
+    # Engine
+    ohlcv_limit:          int   = Field(default=500,  ge=100)
+    poll_interval_seconds: float = Field(default=60.0, gt=0)
+    max_open_positions:   int   = Field(default=3,    ge=1)
+
+    # Strategy
+    smc_min_score: float = Field(default=4.0, ge=1.0, le=10.0)
+
     # Logging
     log_level: LogLevel = LogLevel.INFO
 

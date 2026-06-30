@@ -79,3 +79,59 @@ class TestTimeframeValidation:
     def test_invalid_timeframe_raises(self):
         with pytest.raises(ValidationError, match="timeframe must be one of"):
             make_settings(timeframe="2d")
+
+
+class TestEngineDefaults:
+    def test_ohlcv_limit_default_500(self):
+        s = make_settings()
+        assert s.ohlcv_limit == 500
+
+    def test_ohlcv_limit_minimum_100(self):
+        with pytest.raises(ValidationError):
+            make_settings(ohlcv_limit=99)
+
+    def test_ohlcv_limit_100_is_valid(self):
+        s = make_settings(ohlcv_limit=100)
+        assert s.ohlcv_limit == 100
+
+    def test_poll_interval_default_60(self):
+        s = make_settings()
+        assert s.poll_interval_seconds == pytest.approx(60.0)
+
+    def test_poll_interval_zero_raises(self):
+        with pytest.raises(ValidationError):
+            make_settings(poll_interval_seconds=0.0)
+
+    def test_poll_interval_negative_raises(self):
+        with pytest.raises(ValidationError):
+            make_settings(poll_interval_seconds=-1.0)
+
+    def test_max_open_positions_default_3(self):
+        s = make_settings()
+        assert s.max_open_positions == 3
+
+    def test_max_open_positions_zero_raises(self):
+        with pytest.raises(ValidationError):
+            make_settings(max_open_positions=0)
+
+    def test_max_open_positions_1_is_valid(self):
+        s = make_settings(max_open_positions=1)
+        assert s.max_open_positions == 1
+
+
+class TestStrategyDefaults:
+    def test_smc_min_score_default_4(self):
+        s = make_settings()
+        assert s.smc_min_score == pytest.approx(4.0)
+
+    def test_smc_min_score_below_1_raises(self):
+        with pytest.raises(ValidationError):
+            make_settings(smc_min_score=0.5)
+
+    def test_smc_min_score_above_10_raises(self):
+        with pytest.raises(ValidationError):
+            make_settings(smc_min_score=10.1)
+
+    def test_smc_min_score_10_is_valid(self):
+        s = make_settings(smc_min_score=10.0)
+        assert s.smc_min_score == pytest.approx(10.0)
