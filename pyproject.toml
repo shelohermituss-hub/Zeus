@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 zeus = "zeus.main:main"
+zeus-backtest-mt5 = "zeus.backtest.run_mt5:main"
 
 [project.optional-dependencies]
 dev = [
