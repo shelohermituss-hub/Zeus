@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 
 from zeus.strategy.smc.pivot import PivotPoint, detect_pivots, BULLISH, BEARISH
@@ -21,6 +22,7 @@ from zeus.strategy.smc.liquidity import (
     detect_liquidity_levels, detect_sweeps,
 )
 from zeus.strategy.smc.session import SessionRange, detect_session_ranges
+from zeus.strategy.smc.volume_profile import VolumeProfile, compute_volume_profile
 
 
 @dataclass
@@ -52,6 +54,9 @@ class SMCResult:
     # Session ranges: Asian / London / NY H/L (factor 7)
     session_ranges: list[SessionRange] = field(default_factory=list)
 
+    # Volume profile snapshot over the full analysis window (factor 6)
+    volume_profile: VolumeProfile | None = None
+
     # Current bias derived from most recent structure event
     swing_bias: int    = 0   # BULLISH=+1, BEARISH=-1, 0=undefined
     internal_bias: int = 0
@@ -65,6 +70,8 @@ def analyze(
     ob_mitigation: str = "highlow",
     show_fvg: bool = True,
     fvg_auto_threshold: bool = True,
+    vol_num_bins: int = 100,
+    vol_value_area_pct: float = 0.70,
 ) -> SMCResult:
     """
     Run the complete SMC analysis on an OHLCV DataFrame.
@@ -113,7 +120,22 @@ def analyze(
         list(highs), list(lows), list(closes), liq_levels
     )
 
-    # 7 — Session ranges: Asian / London / NY H/L (factor 7)
+    # 7 — Volume profile over the full window (factor 6)
+    volumes_arr = (
+        df["volume"].to_numpy(dtype=float)
+        if "volume" in df.columns
+        else np.ones(len(df), dtype=float)
+    )
+    vol_profile = compute_volume_profile(
+        highs.to_numpy(dtype=float),
+        lows.to_numpy(dtype=float),
+        volumes_arr,
+        num_bins=vol_num_bins,
+        value_area_pct=vol_value_area_pct,
+        formed_at=len(df) - 1,
+    )
+
+    # 8 — Session ranges: Asian / London / NY H/L (factor 7)
     # Only available when the DataFrame carries datetime index information
     sess_ranges = (
         detect_session_ranges(df)
@@ -121,7 +143,7 @@ def analyze(
         else []
     )
 
-    # 8 — Derive current bias from latest structure event
+    # 9 — Derive current bias from latest structure event
     swing_bias    = next((e.direction for e in reversed(swing_struct)),    0)
     internal_bias = next((e.direction for e in reversed(internal_struct)), 0)
 
@@ -136,6 +158,7 @@ def analyze(
         fib_zones=fib_zones,
         liquidity_levels=liq_levels,
         liquidity_sweeps=liq_sweeps,
+        volume_profile=vol_profile,
         session_ranges=sess_ranges,
         swing_bias=swing_bias,
         internal_bias=internal_bias,
