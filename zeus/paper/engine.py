@@ -19,6 +19,8 @@ from datetime import date, datetime, timezone
 
 from zeus.exchange.connector import ExchangeConnector
 from zeus.exchange.paper import PaperConnector
+from zeus.monitoring.alerts import AlertConfig, AlertManager
+from zeus.monitoring.metrics import SessionMetrics
 from zeus.orders.executor import OrderExecutor
 from zeus.orders.models import TradeStatus
 from zeus.risk.manager import RiskManager
@@ -60,6 +62,7 @@ class PaperEngine:
         max_open_positions: int = 3,
         fee_pct: float = 0.001,
         slippage_pct: float = 0.0005,
+        alert_config: AlertConfig | None = None,
     ) -> None:
         self._strategy       = strategy
         self._market         = market_connector
@@ -70,6 +73,9 @@ class PaperEngine:
         self._fee_pct        = fee_pct
         self._running        = False
         self._last_day: date | None = None
+
+        self._metrics = SessionMetrics(initial_balance)
+        self._alerts  = AlertManager(alert_config)
 
         self._paper = PaperConnector(initial_balance=initial_balance, slippage_pct=slippage_pct)
         self._risk  = RiskManager(
@@ -89,6 +95,11 @@ class PaperEngine:
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
+
+    @property
+    def metrics(self) -> SessionMetrics:
+        """Read-only access to the session metrics accumulator."""
+        return self._metrics
 
     @property
     def executor(self) -> OrderExecutor:
@@ -181,6 +192,7 @@ class PaperEngine:
 
     def _tick(self) -> None:
         """Execute one data fetch → exit check → signal → entry cycle."""
+        t0 = time.monotonic()
         try:
             self._check_daily_reset()
 
@@ -204,6 +216,7 @@ class PaperEngine:
             # Exit check before new entries
             closed_trades = self._executor.check_exits(self._symbol, close)
             for t in closed_trades:
+                self._metrics.record_trade(t)
                 logger.info(
                     "Trade exited",
                     trade_id=t.trade_id,
@@ -237,6 +250,11 @@ class PaperEngine:
                 + self._risk.state.total_exposure
                 + open_pnl
             )
+
+            latency_ms = (time.monotonic() - t0) * 1000
+            self._metrics.record_tick(latency_ms, equity)
+            self._alerts.check_and_log(self._metrics.snapshot(), self._risk.state)
+
             logger.info(
                 "Tick complete",
                 symbol=self._symbol,
@@ -247,6 +265,7 @@ class PaperEngine:
             )
 
         except Exception as exc:
+            self._metrics.record_api_error()
             logger.error("Tick error", symbol=self._symbol, error=str(exc))
 
     def _check_daily_reset(self) -> None:

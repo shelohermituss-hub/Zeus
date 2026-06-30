@@ -580,3 +580,136 @@ class TestEquityTracking:
         engine.run(max_ticks=2)
         # After TP close, no open positions
         assert engine.risk.state.open_positions == 0
+
+
+# ======================================================================
+# Monitoring integration
+# ======================================================================
+
+class TestMonitoringIntegration:
+    """Verify that SessionMetrics and AlertManager are wired into the tick loop."""
+
+    def test_metrics_property_type(self):
+        from zeus.monitoring.metrics import SessionMetrics
+        e = _engine()
+        assert isinstance(e.metrics, SessionMetrics)
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_tick_counted_after_successful_tick(self, mock_sleep):
+        e = _engine()
+        e.run(max_ticks=1)
+        assert e.metrics.snapshot().total_ticks == 1
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_multiple_ticks_counted(self, mock_sleep):
+        e = _engine()
+        e.run(max_ticks=4)
+        assert e.metrics.snapshot().total_ticks == 4
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_skipped_tick_not_counted(self, mock_sleep):
+        """Empty OHLCV causes early return; tick must not be recorded."""
+        e = _engine(market=_market(df=pd.DataFrame()))
+        e.run(max_ticks=2)
+        assert e.metrics.snapshot().total_ticks == 0
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_api_error_recorded_on_fetch_exception(self, mock_sleep):
+        market = MagicMock()
+        market.fetch_ohlcv.side_effect = RuntimeError("timeout")
+        e = _engine(market=market)
+        e.run(max_ticks=1)
+        assert e.metrics.snapshot().api_errors == 1
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_api_error_not_counted_as_tick(self, mock_sleep):
+        """Failed ticks (exceptions) do not increment total_ticks."""
+        market = MagicMock()
+        market.fetch_ohlcv.side_effect = RuntimeError("timeout")
+        e = _engine(market=market)
+        e.run(max_ticks=1)
+        assert e.metrics.snapshot().total_ticks == 0
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_latency_tracked_after_tick(self, mock_sleep):
+        e = _engine()
+        e.run(max_ticks=1)
+        snap = e.metrics.snapshot()
+        assert snap.avg_latency_ms >= 0.0
+        assert snap.p99_latency_ms >= 0.0
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_equity_tracked_in_metrics(self, mock_sleep):
+        e = _engine(balance=10_000.0)
+        e.run(max_ticks=1)
+        snap = e.metrics.snapshot()
+        assert snap.current_equity == pytest.approx(10_000.0, rel=1e-3)
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_closed_trade_recorded_after_sl(self, mock_sleep):
+        """SL hit on tick 2 → metrics should count one closed trade."""
+        prices = [100.0, 80.0]
+        call_count = [0]
+
+        market = MagicMock()
+        def _ohlcv(*args, **kwargs):
+            p = prices[min(call_count[0], 1)]
+            call_count[0] += 1
+            return _make_df(100, close=p)
+        market.fetch_ohlcv.side_effect = _ohlcv
+
+        class _LongOnce:
+            _fired = False
+            def generate_signal(self, df, bar_index):
+                if not self._fired:
+                    self._fired = True
+                    return Signal(SignalType.LONG, 0.9, "long", bar_index)
+                return Signal(SignalType.NONE, 0.0, "none", bar_index)
+
+        engine = PaperEngine(
+            strategy=_LongOnce(),
+            market_connector=market,
+            initial_balance=10_000.0,
+            stop_loss_pct=0.10,
+            poll_interval=0.0,
+            slippage_pct=0.0,
+        )
+        engine.run(max_ticks=2)
+
+        snap = engine.metrics.snapshot()
+        assert snap.n_trades == 1
+        assert snap.n_losing == 1
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_alerts_checked_each_successful_tick(self, mock_sleep):
+        """check_and_log must be called exactly once per successful tick."""
+        from unittest.mock import MagicMock
+        e = _engine()
+        mock_alerts = MagicMock()
+        e._alerts = mock_alerts
+        e.run(max_ticks=3)
+        assert mock_alerts.check_and_log.call_count == 3
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_alerts_not_called_on_failed_tick(self, mock_sleep):
+        """Exceptions must not trigger check_and_log (no metrics to report)."""
+        market = MagicMock()
+        market.fetch_ohlcv.side_effect = RuntimeError("timeout")
+        e = _engine(market=market)
+        mock_alerts = MagicMock()
+        e._alerts = mock_alerts
+        e.run(max_ticks=1)
+        mock_alerts.check_and_log.assert_not_called()
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_custom_alert_config_accepted(self, mock_sleep):
+        from zeus.monitoring.alerts import AlertConfig
+        cfg = AlertConfig(drawdown_warn_pct=0.02)
+        e = PaperEngine(
+            strategy=_AlwaysNone(),
+            market_connector=_market(),
+            alert_config=cfg,
+            poll_interval=0.0,
+        )
+        e.run(max_ticks=1)
+        assert e.metrics.snapshot().total_ticks == 1
