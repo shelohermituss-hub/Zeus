@@ -1,61 +1,95 @@
 """
-SMC-based trading strategy — generates LONG/SHORT signals from SMC signals.
+SMC-based trading strategy — 10-factor confluence scoring engine.
 
-Entry logic:
-    LONG  conditions:
-        1. Internal structure is BULLISH (last internal event = BOS or CHoCH upward)
-        2. Current close is at or near (ob_proximity_pct) an active BULLISH order block
-           OR an active bullish FVG overlaps the current price
+Replaces the earlier 2-factor approach (internal structure + OB/FVG)
+with the full multi-factor confluence engine defined in confluence.py.
+A signal is only emitted when BOTH gate factors fire AND the total
+active-factor count meets the minimum score threshold.
 
-    SHORT conditions (mirror):
-        1. Internal structure is BEARISH
-        2. Current close is at or near an active BEARISH order block
-           OR an active bearish FVG overlaps the current price
+Signal generation
+-----------------
+At each bar the strategy:
+1. Runs the full SMC analysis (analyze()) over the available window.
+2. Calls best_confluence() to evaluate all 10 factors for both directions.
+3. Maps the winning ConfluenceScore to a Signal:
+   - direction  → SignalType.LONG (+1) or SHORT (-1)
+   - confidence → active_count / 10  (continuous 0.0–1.0)
+   - reason     → human-readable active-factor summary for logging
 
-Confidence:
-    - CHoCH (reversal) at OB  → 0.90
-    - BOS   (continuation) at OB → 0.75
-    - FVG entry only (no OB) → 0.60
-
-No signal is emitted when data is insufficient (fewer bars than
-2 × max(swing_length, internal_length)).
+Gate factors (1 and 8) must both fire regardless of total score.
+No signal is emitted when data is insufficient or no confluent setup exists.
 """
 from __future__ import annotations
 
 import pandas as pd
 
 from zeus.strategy.base import Signal, SignalType, Strategy
+from zeus.strategy.confluence import ConfluenceScore, best_confluence
 from zeus.strategy.smc.indicator import SMCResult, analyze
-from zeus.strategy.smc.order_block import get_active_order_blocks
-from zeus.strategy.smc.fvg import get_active_fvgs
-from zeus.strategy.smc.pivot import BULLISH, BEARISH
-from zeus.strategy.smc.structure import StructureType
+from zeus.strategy.smc.pivot import BULLISH
 
 
 class SMCStrategy(Strategy):
     """
-    Implements a Smart Money Concepts strategy using internal structure as
-    the primary bias filter and order blocks / FVGs as entry triggers.
+    Smart Money Concepts strategy driven by a 10-factor confluence score.
+
+    A trade setup requires:
+    - Factor 1  (GATE): swing market structure aligned with the direction.
+    - Factor 8  (GATE): internal structure bias confirms the direction.
+    - Total active-factor count ≥ min_score (default 4 out of 10).
+
+    Both gate factors must fire for a signal regardless of total score.
+
+    Args:
+        swing_length:          Lookback for swing pivot detection (Pine default 50).
+        internal_length:       Lookback for internal structure pivots (Pine default 5).
+        atr_period:            ATR period for order-block volatility filter.
+        ob_mitigation:         OB mitigation mode: "highlow" or "close".
+        vol_num_bins:          Price grid resolution for the volume profile.
+        vol_value_area_pct:    Fraction of volume the value area must cover (0.70 = 70%).
+        min_score:             Minimum active factors required (both gates + score).
+        poc_tolerance_pct:     ±% band around POC for factor 6.
+        session_tolerance_pct: ±% band around session H/L for factor 7.
+        fib_50_tolerance_pct:  ±% band around Fibonacci 50% for factor 10.
+        sweep_lookback:        Max bars since last liquidity sweep for factor 4.
     """
 
     def __init__(
         self,
-        swing_length: int = 50,
-        internal_length: int = 5,
-        ob_proximity_pct: float = 0.003,   # ±0.3 % of OB to consider "at the zone"
-        atr_period: int = 200,
-        ob_mitigation: str = "highlow",
+        swing_length:          int   = 50,
+        internal_length:       int   = 5,
+        atr_period:            int   = 200,
+        ob_mitigation:         str   = "highlow",
+        vol_num_bins:          int   = 100,
+        vol_value_area_pct:    float = 0.70,
+        min_score:             float = 4.0,
+        poc_tolerance_pct:     float = 0.003,
+        session_tolerance_pct: float = 0.003,
+        fib_50_tolerance_pct:  float = 0.003,
+        sweep_lookback:        int   = 10,
     ) -> None:
-        self.swing_length    = swing_length
-        self.internal_length = internal_length
-        self.ob_proximity_pct = ob_proximity_pct
-        self.atr_period      = atr_period
-        self.ob_mitigation   = ob_mitigation
+        self.swing_length          = swing_length
+        self.internal_length       = internal_length
+        self.atr_period            = atr_period
+        self.ob_mitigation         = ob_mitigation
+        self.vol_num_bins          = vol_num_bins
+        self.vol_value_area_pct    = vol_value_area_pct
+        self.min_score             = min_score
+        self.poc_tolerance_pct     = poc_tolerance_pct
+        self.session_tolerance_pct = session_tolerance_pct
+        self.fib_50_tolerance_pct  = fib_50_tolerance_pct
+        self.sweep_lookback        = sweep_lookback
 
         self._min_bars = max(swing_length, internal_length) * 2
 
     def generate_signal(self, df: pd.DataFrame, bar_index: int) -> Signal:
-        """Run SMC analysis on df[:bar_index+1] and return a trading signal."""
+        """
+        Run SMC analysis on df[:bar_index+1] and return a trading signal.
+
+        Returns Signal(NONE) when:
+        - The window has fewer than _min_bars bars.
+        - No direction meets the minimum score + gate requirements.
+        """
         window = df.iloc[: bar_index + 1]
 
         if len(window) < self._min_bars:
@@ -67,81 +101,39 @@ class SMCStrategy(Strategy):
             internal_length=self.internal_length,
             atr_period=self.atr_period,
             ob_mitigation=self.ob_mitigation,
+            vol_num_bins=self.vol_num_bins,
+            vol_value_area_pct=self.vol_value_area_pct,
         )
 
         price = float(df["close"].iloc[bar_index])
-        return self._evaluate(result, price, bar_index)
+        cs = best_confluence(
+            result, price, bar_index,
+            min_score=self.min_score,
+            poc_tolerance_pct=self.poc_tolerance_pct,
+            session_tolerance_pct=self.session_tolerance_pct,
+            fib_50_tolerance_pct=self.fib_50_tolerance_pct,
+            sweep_lookback=self.sweep_lookback,
+        )
+
+        if cs is None:
+            return Signal(SignalType.NONE, 0.0, "no confluent signal", bar_index)
+
+        return self._signal_from_score(cs, bar_index)
 
     # ------------------------------------------------------------------ #
-    # Private helpers                                                       #
+    # Private helpers                                                      #
     # ------------------------------------------------------------------ #
 
-    def _evaluate(self, result: SMCResult, price: float, bar_index: int) -> Signal:
-        bias = result.internal_bias
+    @staticmethod
+    def _signal_from_score(cs: ConfluenceScore, bar_index: int) -> Signal:
+        """Convert a tradeable ConfluenceScore to a Signal."""
+        stype = SignalType.LONG if cs.direction == BULLISH else SignalType.SHORT
 
-        if bias == 0:
-            return Signal(SignalType.NONE, 0.0, "no internal bias", bar_index)
+        active_names    = [f.name for f in cs.factors if f.active]
+        direction_label = "BULLISH" if cs.direction == BULLISH else "BEARISH"
+        reason = (
+            f"{direction_label} score={cs.active_count}/10 "
+            f"[{', '.join(active_names)}]"
+        )
 
-        # Check order block entry
-        ob_result = self._ob_entry(result, price, bias, bar_index)
-        if ob_result is not None:
-            return ob_result
-
-        # Check FVG entry (lower confidence — no OB confluence)
-        fvg_result = self._fvg_entry(result, price, bias, bar_index)
-        if fvg_result is not None:
-            return fvg_result
-
-        return Signal(SignalType.NONE, 0.0, "no entry condition", bar_index)
-
-    def _ob_entry(
-        self,
-        result: SMCResult,
-        price: float,
-        bias: int,
-        bar_index: int,
-    ) -> Signal | None:
-        active_obs = get_active_order_blocks(result.internal_obs, bar_index)
-        prox = self.ob_proximity_pct
-
-        for ob in reversed(active_obs):
-            if ob.direction != bias:
-                continue
-            lo_zone = ob.low  * (1 - prox)
-            hi_zone = ob.high * (1 + prox)
-            if lo_zone <= price <= hi_zone:
-                # Determine if last internal event was CHoCH (reversal → higher confidence)
-                last_event = next(
-                    (e for e in reversed(result.internal_structure) if e.direction == bias), None
-                )
-                is_choch   = last_event is not None and last_event.structure_type == StructureType.CHOCH
-                confidence = 0.90 if is_choch else 0.75
-                stype      = SignalType.LONG if bias == BULLISH else SignalType.SHORT
-                tag        = "CHoCH" if is_choch else "BOS"
-                reason     = (
-                    f"internal {tag} {'bullish' if bias == BULLISH else 'bearish'} "
-                    f"+ price at OB [{ob.low:.4f}-{ob.high:.4f}]"
-                )
-                return Signal(stype, confidence, reason, bar_index)
-        return None
-
-    def _fvg_entry(
-        self,
-        result: SMCResult,
-        price: float,
-        bias: int,
-        bar_index: int,
-    ) -> Signal | None:
-        active_fvgs = get_active_fvgs(result.fvgs, bar_index)
-
-        for fvg in reversed(active_fvgs):
-            if fvg.direction != bias:
-                continue
-            if fvg.bottom <= price <= fvg.top:
-                stype  = SignalType.LONG if bias == BULLISH else SignalType.SHORT
-                reason = (
-                    f"price inside {'bullish' if bias == BULLISH else 'bearish'} FVG "
-                    f"[{fvg.bottom:.4f}-{fvg.top:.4f}]"
-                )
-                return Signal(stype, 0.60, reason, bar_index)
-        return None
+        return Signal(stype, cs.confidence, reason, bar_index)
