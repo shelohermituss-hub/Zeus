@@ -15,6 +15,11 @@ from zeus.strategy.smc.pivot import PivotPoint, detect_pivots, BULLISH, BEARISH
 from zeus.strategy.smc.structure import StructureEvent, detect_structure
 from zeus.strategy.smc.order_block import OrderBlock, detect_order_blocks, get_active_order_blocks
 from zeus.strategy.smc.fvg import FairValueGap, detect_fvg, get_active_fvgs
+from zeus.strategy.smc.fibonacci import FibZone, detect_fib_zones
+from zeus.strategy.smc.liquidity import (
+    LiquidityLevel, LiquiditySweep,
+    detect_liquidity_levels, detect_sweeps,
+)
 
 
 @dataclass
@@ -35,6 +40,13 @@ class SMCResult:
 
     # Fair Value Gaps
     fvgs: list[FairValueGap] = field(default_factory=list)
+
+    # Fibonacci zones (swing-level only — covers factor 2 and 10)
+    fib_zones: list[FibZone] = field(default_factory=list)
+
+    # Liquidity levels and sweeps (factor 4)
+    liquidity_levels: list[LiquidityLevel] = field(default_factory=list)
+    liquidity_sweeps: list[LiquiditySweep] = field(default_factory=list)
 
     # Current bias derived from most recent structure event
     swing_bias: int    = 0   # BULLISH=+1, BEARISH=-1, 0=undefined
@@ -88,7 +100,16 @@ def analyze(
     # 4 — Fair Value Gaps
     fvgs = detect_fvg(highs, lows, closes, opens, fvg_auto_threshold) if show_fvg else []
 
-    # 5 — Derive current bias from latest structure event
+    # 5 — Fibonacci retracement zones (swing pivots → factors 2 & 10)
+    fib_zones = detect_fib_zones(swing_pivots)
+
+    # 6 — Liquidity levels and sweeps (factor 4)
+    liq_levels = detect_liquidity_levels(swing_pivots)
+    liq_sweeps = detect_sweeps(
+        list(highs), list(lows), list(closes), liq_levels
+    )
+
+    # 7 — Derive current bias from latest structure event
     swing_bias    = next((e.direction for e in reversed(swing_struct)),    0)
     internal_bias = next((e.direction for e in reversed(internal_struct)), 0)
 
@@ -100,6 +121,9 @@ def analyze(
         swing_obs=swing_obs,
         internal_obs=internal_obs,
         fvgs=fvgs,
+        fib_zones=fib_zones,
+        liquidity_levels=liq_levels,
+        liquidity_sweeps=liq_sweeps,
         swing_bias=swing_bias,
         internal_bias=internal_bias,
     )
