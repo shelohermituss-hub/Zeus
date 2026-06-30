@@ -20,6 +20,7 @@ from zeus.strategy.smc.liquidity import (
     LiquidityLevel, LiquiditySweep,
     detect_liquidity_levels, detect_sweeps,
 )
+from zeus.strategy.smc.session import SessionRange, detect_session_ranges
 
 
 @dataclass
@@ -47,6 +48,9 @@ class SMCResult:
     # Liquidity levels and sweeps (factor 4)
     liquidity_levels: list[LiquidityLevel] = field(default_factory=list)
     liquidity_sweeps: list[LiquiditySweep] = field(default_factory=list)
+
+    # Session ranges: Asian / London / NY H/L (factor 7)
+    session_ranges: list[SessionRange] = field(default_factory=list)
 
     # Current bias derived from most recent structure event
     swing_bias: int    = 0   # BULLISH=+1, BEARISH=-1, 0=undefined
@@ -109,7 +113,15 @@ def analyze(
         list(highs), list(lows), list(closes), liq_levels
     )
 
-    # 7 — Derive current bias from latest structure event
+    # 7 — Session ranges: Asian / London / NY H/L (factor 7)
+    # Only available when the DataFrame carries datetime index information
+    sess_ranges = (
+        detect_session_ranges(df)
+        if isinstance(df.index, pd.DatetimeIndex)
+        else []
+    )
+
+    # 8 — Derive current bias from latest structure event
     swing_bias    = next((e.direction for e in reversed(swing_struct)),    0)
     internal_bias = next((e.direction for e in reversed(internal_struct)), 0)
 
@@ -124,6 +136,7 @@ def analyze(
         fib_zones=fib_zones,
         liquidity_levels=liq_levels,
         liquidity_sweeps=liq_sweeps,
+        session_ranges=sess_ranges,
         swing_bias=swing_bias,
         internal_bias=internal_bias,
     )
