@@ -7,8 +7,7 @@ __pycache__/
 htmlcov/
 dist/
 build/
-data/logs/*.log
-data/logs/*.json
+data/logs/
 *.db
 .venv/
 venv/
