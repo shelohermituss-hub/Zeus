@@ -26,6 +26,8 @@ Key environment variables (full list in zeus/config.py):
     ZEUS_OHLCV_LIMIT          bars per fetch      (default: 500)
     ZEUS_SMC_MIN_SCORE        confluence min      (default: 4.0)
     ZEUS_LOG_LEVEL            DEBUG/INFO/WARNING  (default: INFO)
+    ZEUS_TELEGRAM_BOT_TOKEN   Telegram bot token  (optional; unset = disabled)
+    ZEUS_TELEGRAM_CHAT_ID     Telegram chat id    (optional; unset = disabled)
 """
 from __future__ import annotations
 
@@ -34,6 +36,7 @@ import sys
 
 from zeus.config import ConnectorType, get_settings
 from zeus.exchange.factory import create_market_connector
+from zeus.monitoring.telegram import TelegramNotifier
 from zeus.paper.engine import PaperEngine
 from zeus.strategy.smc_strategy import SMCStrategy
 from zeus.utils.logger import logger, setup_logger
@@ -73,6 +76,13 @@ def main() -> None:
         else settings.symbol
     )
 
+    notifier = TelegramNotifier(
+        bot_token=settings.telegram_bot_token,
+        chat_id=settings.telegram_chat_id,
+    )
+    if notifier.enabled:
+        logger.info("Telegram notifications enabled")
+
     engine = PaperEngine(
         strategy=strategy,
         market_connector=market_connector,
@@ -85,6 +95,7 @@ def main() -> None:
         take_profit_pct=settings.take_profit_pct,
         max_position_pct=settings.max_position_pct,
         max_open_positions=settings.max_open_positions,
+        notifier=notifier,
     )
 
     def _shutdown(sig, frame):

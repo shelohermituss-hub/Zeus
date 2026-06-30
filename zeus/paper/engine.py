@@ -21,6 +21,7 @@ from zeus.exchange.connector import ExchangeConnector
 from zeus.exchange.paper import PaperConnector
 from zeus.monitoring.alerts import AlertConfig, AlertManager
 from zeus.monitoring.metrics import SessionMetrics
+from zeus.monitoring.telegram import TelegramNotifier
 from zeus.orders.executor import OrderExecutor
 from zeus.orders.models import TradeStatus
 from zeus.risk.manager import RiskManager
@@ -45,6 +46,8 @@ class PaperEngine:
         max_position_pct:   Max capital per trade as fraction of equity.
         max_open_positions: Hard cap on concurrent open positions.
         fee_pct:            Fee per side — tracked in status, not deducted live.
+        notifier:           Optional TelegramNotifier for ERROR-level alerts.
+                            None (default) yields a disabled no-op notifier.
     """
 
     def __init__(
@@ -63,6 +66,7 @@ class PaperEngine:
         fee_pct: float = 0.001,
         slippage_pct: float = 0.0005,
         alert_config: AlertConfig | None = None,
+        notifier: TelegramNotifier | None = None,
     ) -> None:
         self._strategy       = strategy
         self._market         = market_connector
@@ -74,8 +78,9 @@ class PaperEngine:
         self._running        = False
         self._last_day: date | None = None
 
-        self._metrics = SessionMetrics(initial_balance)
-        self._alerts  = AlertManager(alert_config)
+        self._metrics  = SessionMetrics(initial_balance)
+        self._alerts   = AlertManager(alert_config)
+        self._notifier = notifier or TelegramNotifier(bot_token="", chat_id="")
 
         self._paper = PaperConnector(initial_balance=initial_balance, slippage_pct=slippage_pct)
         self._risk  = RiskManager(
@@ -253,7 +258,10 @@ class PaperEngine:
 
             latency_ms = (time.monotonic() - t0) * 1000
             self._metrics.record_tick(latency_ms, equity)
-            self._alerts.check_and_log(self._metrics.snapshot(), self._risk.state)
+            triggered = self._alerts.check_and_log(self._metrics.snapshot(), self._risk.state)
+            for alert in triggered:
+                if alert.level == "ERROR":
+                    self._notifier.notify_alert(alert)
 
             logger.info(
                 "Tick complete",

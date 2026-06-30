@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     # Logging
     log_level: LogLevel = LogLevel.INFO
 
+    # Telegram notifications (send-only; empty = disabled)
+    telegram_bot_token: str = ""
+    telegram_chat_id:   str = ""
+
     @field_validator("timeframe")
     @classmethod
     def valid_timeframe(cls, v: str) -> str:

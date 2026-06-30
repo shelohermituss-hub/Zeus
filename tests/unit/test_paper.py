@@ -63,6 +63,8 @@ def _engine(
     tp_pct: float | None = 0.20,
     poll_interval: float = 0.0,
     slippage_pct: float = 0.0,  # zero slippage for deterministic test prices
+    alert_config=None,
+    notifier=None,
 ) -> PaperEngine:
     return PaperEngine(
         strategy=strategy or _AlwaysNone(),
@@ -72,6 +74,8 @@ def _engine(
         take_profit_pct=tp_pct,
         poll_interval=poll_interval,
         slippage_pct=slippage_pct,
+        alert_config=alert_config,
+        notifier=notifier,
     )
 
 
@@ -713,3 +717,56 @@ class TestMonitoringIntegration:
         )
         e.run(max_ticks=1)
         assert e.metrics.snapshot().total_ticks == 1
+
+
+# ======================================================================
+# Telegram notifier wiring
+# ======================================================================
+
+class TestNotifierWiring:
+    """Verify that ERROR-level alerts (and only those) reach the Telegram notifier."""
+
+    def test_default_notifier_is_disabled_noop(self):
+        """No notifier passed → engine builds a disabled no-op (never touches the network)."""
+        e = _engine()
+        assert e._notifier.enabled is False
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_notifier_called_on_kill_switch_error_alert(self, mock_sleep):
+        notifier = MagicMock()
+        e = _engine(notifier=notifier)
+        e.set_kill_switch(True, reason="test")
+        e.run(max_ticks=1)
+        notifier.notify_alert.assert_called_once()
+        alert = notifier.notify_alert.call_args.args[0]
+        assert alert.code == "KILL_SWITCH_ACTIVE"
+        assert alert.level == "ERROR"
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_notifier_not_called_when_no_alerts_triggered(self, mock_sleep):
+        notifier = MagicMock()
+        e = _engine(notifier=notifier)
+        e.run(max_ticks=1)
+        notifier.notify_alert.assert_not_called()
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_notifier_not_called_for_warning_only_alert(self, mock_sleep):
+        """HIGH_LATENCY is WARNING-level and must never reach Telegram."""
+        from zeus.monitoring.alerts import AlertConfig
+        notifier = MagicMock()
+        e = _engine(notifier=notifier, alert_config=AlertConfig(latency_warn_ms=0.0))
+        e.run(max_ticks=1)
+        notifier.notify_alert.assert_not_called()
+
+    @patch("zeus.paper.engine.time.sleep")
+    def test_notifier_called_once_per_error_alert(self, mock_sleep):
+        """Two ERROR alerts in the same tick → two notify_alert calls."""
+        from zeus.monitoring.alerts import AlertConfig
+        notifier = MagicMock()
+        e = _engine(
+            notifier=notifier,
+            alert_config=AlertConfig(drawdown_error_pct=0.0),
+        )
+        e.set_kill_switch(True, reason="test")
+        e.run(max_ticks=1)
+        assert notifier.notify_alert.call_count == 2

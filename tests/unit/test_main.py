@@ -38,6 +38,8 @@ def _settings(is_live: bool = False, **overrides) -> MagicMock:
     s.max_position_pct    = 0.02
     s.max_open_positions  = 3
     s.smc_min_score       = 4.0
+    s.telegram_bot_token  = ""
+    s.telegram_chat_id    = ""
     for k, v in overrides.items():
         setattr(s, k, v)
     return s
@@ -182,6 +184,16 @@ class TestEngineWiring:
     def test_max_open_positions_forwarded(self):
         kw = self._engine_kwargs(max_open_positions=5)
         assert kw["max_open_positions"] == 5
+
+    def test_notifier_disabled_when_telegram_unconfigured(self):
+        kw = self._engine_kwargs()
+        assert kw["notifier"].enabled is False
+
+    def test_notifier_enabled_when_telegram_configured(self):
+        kw = self._engine_kwargs(
+            telegram_bot_token="123:ABC", telegram_chat_id="-100200300",
+        )
+        assert kw["notifier"].enabled is True
 
 
 # ======================================================================

@@ -137,6 +137,18 @@ class TestStrategyDefaults:
         assert s.smc_min_score == pytest.approx(10.0)
 
 
+class TestTelegramDefaults:
+    def test_telegram_disabled_by_default(self):
+        s = make_settings()
+        assert s.telegram_bot_token == ""
+        assert s.telegram_chat_id == ""
+
+    def test_telegram_fields_accept_overrides(self):
+        s = make_settings(telegram_bot_token="123:ABC", telegram_chat_id="-100200300")
+        assert s.telegram_bot_token == "123:ABC"
+        assert s.telegram_chat_id == "-100200300"
+
+
 class TestConnectorType:
     def test_default_connector_is_ccxt(self):
         s = make_settings()
