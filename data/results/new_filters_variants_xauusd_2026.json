@@ -1,0 +1,215 @@
+{
+  "meta": {
+    "symbol": "XAUUSD",
+    "start": "2026-01-01",
+    "end": "2026-06-30",
+    "base_config": "V2 (OB+OTE, score\u22653)",
+    "filters_tested": [
+      "require_clean_approach",
+      "require_poc_zone_confluence",
+      "require_session_sweep"
+    ]
+  },
+  "variants": [
+    {
+      "id": "V2",
+      "name": "Baseline (V2)",
+      "config": {
+        "id": "V2",
+        "name": "Baseline (V2)",
+        "approach": false,
+        "poc": false,
+        "sweep": false
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11186.02,
+        "net_pnl": 1186.02,
+        "total_return_pct": 11.86,
+        "n_trades": 40,
+        "win_rate": 32.5,
+        "avg_win": 241.64,
+        "avg_loss": -102.91,
+        "profit_factor": 1.6066,
+        "max_drawdown_pct": 6.32,
+        "sharpe_ratio": 0.0027,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2A",
+      "name": "Approach only",
+      "config": {
+        "id": "V2A",
+        "name": "Approach only",
+        "approach": true,
+        "poc": false,
+        "sweep": false
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11408.88,
+        "net_pnl": 1408.88,
+        "total_return_pct": 14.09,
+        "n_trades": 39,
+        "win_rate": 38.5,
+        "avg_win": 232.84,
+        "avg_loss": -104.19,
+        "profit_factor": 1.6761,
+        "max_drawdown_pct": 6.32,
+        "sharpe_ratio": 0.0032,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2P",
+      "name": "POC zone only",
+      "config": {
+        "id": "V2P",
+        "name": "POC zone only",
+        "approach": false,
+        "poc": true,
+        "sweep": false
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11186.02,
+        "net_pnl": 1186.02,
+        "total_return_pct": 11.86,
+        "n_trades": 40,
+        "win_rate": 32.5,
+        "avg_win": 241.64,
+        "avg_loss": -102.91,
+        "profit_factor": 1.6066,
+        "max_drawdown_pct": 6.32,
+        "sharpe_ratio": 0.0027,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2S",
+      "name": "Session sweep only",
+      "config": {
+        "id": "V2S",
+        "name": "Session sweep only",
+        "approach": false,
+        "poc": false,
+        "sweep": true
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9750.05,
+        "net_pnl": -249.95,
+        "total_return_pct": -2.5,
+        "n_trades": 6,
+        "win_rate": 16.7,
+        "avg_win": 147.01,
+        "avg_loss": -99.24,
+        "profit_factor": 0.3703,
+        "max_drawdown_pct": 3.14,
+        "sharpe_ratio": -0.0014,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2AP",
+      "name": "Approach + POC",
+      "config": {
+        "id": "V2AP",
+        "name": "Approach + POC",
+        "approach": true,
+        "poc": true,
+        "sweep": false
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11408.88,
+        "net_pnl": 1408.88,
+        "total_return_pct": 14.09,
+        "n_trades": 39,
+        "win_rate": 38.5,
+        "avg_win": 232.84,
+        "avg_loss": -104.19,
+        "profit_factor": 1.6761,
+        "max_drawdown_pct": 6.32,
+        "sharpe_ratio": 0.0032,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2AS",
+      "name": "Approach + Sweep",
+      "config": {
+        "id": "V2AS",
+        "name": "Approach + Sweep",
+        "approach": true,
+        "poc": false,
+        "sweep": true
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9750.05,
+        "net_pnl": -249.95,
+        "total_return_pct": -2.5,
+        "n_trades": 5,
+        "win_rate": 20.0,
+        "avg_win": 147.01,
+        "avg_loss": -99.24,
+        "profit_factor": 0.3703,
+        "max_drawdown_pct": 3.14,
+        "sharpe_ratio": -0.0015,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2PS",
+      "name": "POC + Sweep",
+      "config": {
+        "id": "V2PS",
+        "name": "POC + Sweep",
+        "approach": false,
+        "poc": true,
+        "sweep": true
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9750.05,
+        "net_pnl": -249.95,
+        "total_return_pct": -2.5,
+        "n_trades": 6,
+        "win_rate": 16.7,
+        "avg_win": 147.01,
+        "avg_loss": -99.24,
+        "profit_factor": 0.3703,
+        "max_drawdown_pct": 3.14,
+        "sharpe_ratio": -0.0014,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2ALL",
+      "name": "All three filters",
+      "config": {
+        "id": "V2ALL",
+        "name": "All three filters",
+        "approach": true,
+        "poc": true,
+        "sweep": true
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9750.05,
+        "net_pnl": -249.95,
+        "total_return_pct": -2.5,
+        "n_trades": 5,
+        "win_rate": 20.0,
+        "avg_win": 147.01,
+        "avg_loss": -99.24,
+        "profit_factor": 0.3703,
+        "max_drawdown_pct": 3.14,
+        "sharpe_ratio": -0.0015,
+        "total_fees": 0.0
+      }
+    }
+  ]
+}
