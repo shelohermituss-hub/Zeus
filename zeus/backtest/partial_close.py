@@ -4,11 +4,18 @@ Progressive partial-close system.
 Models a "laddered exit" where a position is reduced at several R-multiple
 targets rather than fully closed at a single take-profit level.
 
-Default configuration matches the "sniper SMC" profile:
-  - 3R  → close 75 % of remaining position; move SL to breakeven
-  - 5R  → close 40 % of remaining (= 10 % of original; 85 % total); no SL move
-  - 5R+ → trailing stop trails 5 R behind the highest price reached
-  - 25R → hard close of whatever remains
+Available profiles
+------------------
+PartialCloseConfig.default()   — original SMC sniper profile:
+  3R  → close 75 % of position; SL to breakeven
+  5R  → close 40 % of remaining (85 % total); no SL move
+  5R+ → trail 5 R behind highest; hard close at 25 R
+
+PartialCloseConfig.mtf_smc()   — 4-TF cascade scalp profile:
+  1R  → SL to breakeven only (no partial close)
+  3R  → close 60 % (40 % remaining)
+  5R  → close 62.5 % of remaining (= 85 % of original; 15 % remaining)
+  10R → close 100 % of remaining (final exit)
 
 Pip convention for XAUUSD:
   1 pip = $1 in quoted price (e.g. 2600.00 → 2601.00 = 1 pip).
@@ -70,6 +77,30 @@ class PartialCloseConfig:
                 PartialCloseLevel(r_multiple=5.0,  close_fraction=0.40, sl_to_r=None),
             ],
             trailing=TrailingConfig(activate_at_r=5.0, trail_r=5.0, hard_close_r=25.0),
+        )
+
+    @staticmethod
+    def mtf_smc() -> PartialCloseConfig:
+        """
+        4-TF SMC scalp profile — SL stays 20-30 pips; no trailing stop.
+
+          1R  → SL to breakeven only (no partial close)
+          3R  → close 60 % of original (40 % remaining)
+          5R  → close 62.5 % of remaining (= 25 % of original; 85 % total; 15 % remaining)
+          10R → close 100 % of remaining (final exit; 0 % remaining)
+
+        close_fraction values are always relative to the REMAINING quantity at that moment.
+        A close_fraction of 0.0 means "move SL only — do not close any quantity."
+        """
+        return PartialCloseConfig(
+            levels=[
+                PartialCloseLevel(r_multiple=1.0,   close_fraction=0.0,    sl_to_r=0.0),
+                PartialCloseLevel(r_multiple=3.0,   close_fraction=0.60,   sl_to_r=None),
+                PartialCloseLevel(r_multiple=5.0,   close_fraction=0.625,  sl_to_r=None),
+                PartialCloseLevel(r_multiple=10.0,  close_fraction=1.0,    sl_to_r=None),
+            ],
+            # Trailing and hard-close disabled — the 10R level is the final exit.
+            trailing=TrailingConfig(activate_at_r=999.0, trail_r=5.0, hard_close_r=999.0),
         )
 
 
@@ -230,9 +261,14 @@ class PartialCloseState:
                 break
 
             trigger_price = self.price_at_r(level.r_multiple)
-            qty = self.remaining_qty * level.close_fraction
-            pnl = self.close_partial(trigger_price, level.close_fraction)
-            events.append(("partial", trigger_price, qty))
+
+            if level.close_fraction > 0.0:
+                qty = self.remaining_qty * level.close_fraction
+                self.close_partial(trigger_price, level.close_fraction)
+                events.append(("partial", trigger_price, qty))
+            else:
+                # close_fraction == 0.0: SL-move only (e.g. breakeven at 1R)
+                events.append(("be", trigger_price, 0.0))
 
             if level.sl_to_r is not None:
                 self.move_sl_to_r(level.sl_to_r)
