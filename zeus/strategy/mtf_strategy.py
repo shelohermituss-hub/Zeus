@@ -38,6 +38,7 @@ from zeus.strategy.smc.session import (
     is_in_killzone,
     killzone_name,
 )
+from zeus.strategy.smc.approach import compute_approach_quality
 from zeus.strategy.smc.order_block import get_active_order_blocks
 from zeus.strategy.smc.fvg import get_active_fvgs
 from zeus.strategy.smc.fibonacci import get_latest_fib_zone
@@ -91,6 +92,10 @@ class MTFSMCStrategy(Strategy):
         require_choch_candle:         bool = False,
         require_pd_filter:            bool = False,
         require_htf_internal_align:   bool = True,
+        require_clean_approach:       bool = False,
+        approach_lookback:            int   = 5,
+        approach_max_momentum:        float = 0.6,
+        approach_max_body_atr:        float = 1.5,
         max_daily_signals:            int  = 2,
         max_signals_per_session:      int  = 1,
     ) -> None:
@@ -119,6 +124,10 @@ class MTFSMCStrategy(Strategy):
         self._require_choch_candle        = require_choch_candle
         self._require_pd_filter           = require_pd_filter
         self._require_htf_internal_align  = require_htf_internal_align
+        self._require_clean_approach      = require_clean_approach
+        self._approach_lookback           = approach_lookback
+        self._approach_max_momentum       = approach_max_momentum
+        self._approach_max_body_atr       = approach_max_body_atr
         self._max_daily_signals           = max_daily_signals
         self._max_signals_per_session     = max_signals_per_session
         self._min_htf_bars            = max(swing_length, internal_length) * 2
@@ -222,6 +231,19 @@ class MTFSMCStrategy(Strategy):
         # Zone whitelist filter — skip early before expensive confluence scoring
         if self._allowed_zones is not None and zone_type not in self._allowed_zones:
             return Signal(SignalType.NONE, 0.0, f"zone {zone_type} not in allowed_zones", bar_index)
+
+        # ── 4.2. Approach quality gate ────────────────────────────────────
+        # Price must arrive at the zone gradually (pullback), not impulsively.
+        # Impulsive arrival = zone likely to be breached rather than respected.
+        if self._require_clean_approach:
+            is_clean, reason, _ = compute_approach_quality(
+                df, bar_index,
+                lookback=self._approach_lookback,
+                max_momentum=self._approach_max_momentum,
+                max_body_atr=self._approach_max_body_atr,
+            )
+            if not is_clean:
+                return Signal(SignalType.NONE, 0.0, f"dirty approach: {reason}", bar_index)
 
         # ── 4.5. Premium / Discount filter (Rec 12) ──────────────────────
         # Price must be below the HTF 50 % midpoint for longs (discount zone)

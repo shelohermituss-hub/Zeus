@@ -78,6 +78,10 @@ class ScalpSMCStrategy(MTFSMCStrategy):
         killzone_only:           bool  = True,
         require_entry_fvg:       bool  = True,
         require_choch_candle:    bool  = False,
+        require_clean_approach:  bool  = True,
+        approach_lookback:       int   = 5,
+        approach_max_momentum:   float = 0.6,
+        approach_max_body_atr:   float = 1.5,
         max_daily_signals:       int   = 5,
         max_signals_per_session: int   = 2,
         allowed_zones:           list[str] | None = None,
@@ -105,6 +109,10 @@ class ScalpSMCStrategy(MTFSMCStrategy):
             # Scalp entries happen during 1H pullbacks: internal bias is allowed
             # to be opposite to swing bias (that IS the setup — buy the dip).
             require_htf_internal_align=False,
+            require_clean_approach=require_clean_approach,
+            approach_lookback=approach_lookback,
+            approach_max_momentum=approach_max_momentum,
+            approach_max_body_atr=approach_max_body_atr,
             max_daily_signals=max_daily_signals,
             max_signals_per_session=max_signals_per_session,
             allowed_zones=allowed_zones,
