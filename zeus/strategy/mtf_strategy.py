@@ -106,6 +106,8 @@ class MTFSMCStrategy(Strategy):
         session_sweep_lookback:       int   = 30,
         require_ltf_sweep:            bool  = False,
         ltf_sweep_lookback:           int   = 3,
+        require_ote:                  bool  = False,
+        require_daily_bias:           bool  = False,
         max_daily_signals:            int  = 2,
         max_signals_per_session:      int  = 1,
     ) -> None:
@@ -144,6 +146,8 @@ class MTFSMCStrategy(Strategy):
         self._session_sweep_lookback      = session_sweep_lookback
         self._require_ltf_sweep           = require_ltf_sweep
         self._ltf_sweep_lookback          = ltf_sweep_lookback
+        self._require_ote                 = require_ote
+        self._require_daily_bias          = require_daily_bias
         self._max_daily_signals           = max_daily_signals
 
         # Lazy cache — populated on first generate_signal() call with the LTF df
@@ -206,8 +210,23 @@ class MTFSMCStrategy(Strategy):
             return Signal(SignalType.NONE, 0.0, "HTF internal bias mismatch", bar_index)
 
         # ── 3.5. Daily bias alignment gate ───────────────────────────────
-        if self._df_daily is not None:
+        # When require_daily_bias=True: reject if df_daily missing, bias is
+        # neutral (db==0), or bias conflicts. When False (soft mode): only
+        # reject on a confirmed conflict (db != 0 and db != direction).
+        if self._df_daily is not None or self._require_daily_bias:
+            if self._df_daily is None:
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    "daily bias required but df_daily not provided",
+                    bar_index,
+                )
             db = get_daily_bias(self._df_daily, ltf_ts)
+            if db == 0 and self._require_daily_bias:
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    "daily bias neutral — no clear directional bias",
+                    bar_index,
+                )
             if db != 0 and db != direction:
                 db_name  = "bullish" if db == BULLISH else "bearish"
                 dir_name = "bullish" if direction == BULLISH else "bearish"
@@ -272,6 +291,19 @@ class MTFSMCStrategy(Strategy):
         # Zone whitelist filter — skip early before expensive confluence scoring
         if self._allowed_zones is not None and zone_type not in self._allowed_zones:
             return Signal(SignalType.NONE, 0.0, f"zone {zone_type} not in allowed_zones", bar_index)
+
+        # ── 4.1. OTE zone gate ───────────────────────────────────────────
+        # Price must lie within the Fibonacci OTE band (61.8–78.6 % retracement)
+        # of the most recent HTF swing. Ensures the OB entry occurs at the
+        # mathematically optimal retracement level — OB outside OTE is weaker.
+        if self._require_ote:
+            fib_zone = get_latest_fib_zone(htf_result.fib_zones, htf_bar_idx, direction)
+            if fib_zone is None or not fib_zone.is_in_ote(close):
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    "price not in Fibonacci OTE zone (0.618–0.786)",
+                    bar_index,
+                )
 
         # ── 4.2. Approach quality gate ────────────────────────────────────
         # Price must arrive at the zone gradually (pullback), not impulsively.

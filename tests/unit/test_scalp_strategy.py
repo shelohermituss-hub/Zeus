@@ -103,11 +103,11 @@ class TestPartialCloseScalp:
 class TestScalpStrategyInit:
     def test_default_sl_pips(self):
         s = _make_strategy()
-        assert s._sl_pips == pytest.approx(6.0)
+        assert s._sl_pips == pytest.approx(20.0)
 
     def test_default_max_sl_pips(self):
         s = _make_strategy()
-        assert s._max_sl_pips == pytest.approx(10.0)
+        assert s._max_sl_pips == pytest.approx(30.0)
 
     def test_weekly_bias_disabled(self):
         s = _make_strategy()
