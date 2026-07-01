@@ -294,9 +294,9 @@ class PartialCloseState:
             or (not self.is_long and unfavourable >= effective)
         )
         if sl_hit and self.remaining_qty > 0:
-            # Worst-case fill: actual SL price
-            trigger_price = min(effective, unfavourable) if self.is_long \
-                else max(effective, unfavourable)
+            # Fill at the stop price (not the bar extreme); realistic for 5M
+            # intraday data where price trades continuously through the session.
+            trigger_price = effective
             qty = self.remaining_qty
             if self.is_long:
                 pnl = (trigger_price - self.entry_price) * qty

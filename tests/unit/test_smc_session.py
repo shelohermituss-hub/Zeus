@@ -13,6 +13,7 @@ from zeus.strategy.smc.session import (
     detect_session_ranges,
     get_session_ranges,
     get_daily_bias,
+    get_weekly_bias,
     is_in_killzone,
     killzone_name,
     last_session_range,
@@ -548,6 +549,97 @@ class TestGetDailyBias:
     def test_bearish_value_is_minus_one(self):
         df = _daily_df([110.0], [100.0], "2024-01-01")
         assert get_daily_bias(df, self._ltf("2024-01-02")) == -1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# get_weekly_bias
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _weekly_daily_df(opens: list[float], closes: list[float],
+                     start: str = "2024-01-01") -> pd.DataFrame:
+    """
+    Build a daily OHLCV DataFrame starting on *start*.
+    Used to construct multi-week test data for get_weekly_bias.
+    """
+    idx = pd.date_range(start, periods=len(opens), freq="B")  # business days
+    return pd.DataFrame(
+        {"open": opens, "high": closes, "low": opens, "close": closes},
+        index=idx,
+    )
+
+
+class TestGetWeeklyBias:
+    """
+    get_weekly_bias uses the last *completed* W-MON week (Monday-open label).
+    Weeks run Mon–Sun; a week is complete only once the next Monday begins.
+
+    Reference calendar (2024-01-01 = Mon):
+      Week W1: Mon 2024-01-01 → Sun 2024-01-07
+      Week W2: Mon 2024-01-08 → Sun 2024-01-14
+    """
+
+    def _ltf(self, date: str, hour: int = 10) -> pd.Timestamp:
+        return pd.Timestamp(f"{date} {hour:02d}:00:00")
+
+    # ── Bullish / Bearish / Doji ──────────────────────────────────────────
+
+    def test_bullish_week_returns_bullish(self):
+        # 5 trading days (Mon–Fri Jan 1–5) with close > open each day
+        opens  = [100.0] * 5
+        closes = [110.0] * 5
+        df = _weekly_daily_df(opens, closes, "2024-01-01")  # W1 starts Mon Jan 1
+        ts = self._ltf("2024-01-08")  # Monday of W2 → W1 is completed
+        assert get_weekly_bias(df, ts) == BULLISH
+
+    def test_bearish_week_returns_bearish(self):
+        opens  = [110.0] * 5
+        closes = [100.0] * 5
+        df = _weekly_daily_df(opens, closes, "2024-01-01")
+        ts = self._ltf("2024-01-08")
+        assert get_weekly_bias(df, ts) == BEARISH
+
+    def test_no_prior_week_returns_zero(self):
+        # LTF is on the same week as the only data — no completed week
+        opens  = [100.0] * 5
+        closes = [110.0] * 5
+        df = _weekly_daily_df(opens, closes, "2024-01-01")
+        ts = self._ltf("2024-01-03")  # Wednesday of W1 — W1 not complete yet
+        assert get_weekly_bias(df, ts) == 0
+
+    def test_uses_last_complete_week_not_current(self):
+        # W1 (Jan 1–5) bearish, W2 (Jan 8–12) bullish
+        # LTF at Jan 15 → should use W2 (bearish check)
+        opens  = [110.0] * 5 + [100.0] * 5
+        closes = [100.0] * 5 + [120.0] * 5
+        df = _weekly_daily_df(opens, closes, "2024-01-01")
+        ts = self._ltf("2024-01-15")  # Monday of W3
+        assert get_weekly_bias(df, ts) == BULLISH
+
+    def test_empty_df_returns_zero(self):
+        df = pd.DataFrame(
+            {"open": [], "high": [], "low": [], "close": []},
+            index=pd.DatetimeIndex([]),
+        )
+        assert get_weekly_bias(df, self._ltf("2024-01-08")) == 0
+
+    def test_returns_int(self):
+        opens  = [100.0] * 5
+        closes = [110.0] * 5
+        df = _weekly_daily_df(opens, closes, "2024-01-01")
+        result = get_weekly_bias(df, self._ltf("2024-01-08"))
+        assert isinstance(result, int)
+
+    def test_bullish_value_is_plus_one(self):
+        opens  = [100.0] * 5
+        closes = [110.0] * 5
+        df = _weekly_daily_df(opens, closes, "2024-01-01")
+        assert get_weekly_bias(df, self._ltf("2024-01-08")) == 1
+
+    def test_bearish_value_is_minus_one(self):
+        opens  = [110.0] * 5
+        closes = [100.0] * 5
+        df = _weekly_daily_df(opens, closes, "2024-01-01")
+        assert get_weekly_bias(df, self._ltf("2024-01-08")) == -1
 
 
 # ──────────────────────────────────────────────────────────────────────────────

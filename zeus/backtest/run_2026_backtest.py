@@ -135,6 +135,8 @@ def main() -> None:
         killzone_only=True,
         require_asian_sweep=False,
         sweep_zone_tol_pct=0.005,
+        # Weekly bias super-filter (Rec 9) — only trade in weekly trend direction
+        require_weekly_bias=True,
         # 5M FVG entry trigger (Rec 4)
         require_entry_fvg=True,
         ltf_lookback=20,
@@ -215,8 +217,8 @@ def main() -> None:
             "start":      START_DATE,
             "end":        END_DATE,
             "timeframe":  "5M → 4-TF cascade",
-            "features":   ["killzone", "daily_bias", "htf_zones", "5m_fvg",
-                           "partial_close_mtf_smc", "daily_freq_gate"],
+            "features":   ["killzone", "daily_bias", "weekly_bias", "htf_zones",
+                           "5m_fvg", "partial_close_mtf_smc", "daily_freq_gate"],
         "disabled":   ["1h_mss", "asian_sweep"],
         "note":       "1H MSS and Asian sweep produce 0 trades in 6-month dataset; "
                       "see docstring for full calibration details",

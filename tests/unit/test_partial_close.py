@@ -396,6 +396,27 @@ class TestProcessBarMtfSmc:
         assert "sl" in types
         assert s.remaining_qty == pytest.approx(0.0)
 
+    def test_sl_fill_price_is_stop_not_bar_low(self):
+        """BE fill must be at the stop price (5000), not at the bar low (4995)."""
+        s = self._long()
+        s.process_bar(5025.0, 5001.0, _mtf_cfg())  # 1R fires, SL → 5000
+        events = s.process_bar(5010.0, 4995.0, _mtf_cfg())  # low=4995 < BE=5000
+        sl_events = [e for e in events if e[0] == "sl"]
+        assert len(sl_events) == 1
+        fill_price = sl_events[0][1]
+        assert fill_price == pytest.approx(5000.0)  # filled at stop, not bar low
+
+    def test_sl_fill_price_short_is_stop_not_bar_high(self):
+        """Short BE fill must be at 5000 (entry), not at bar high (5025)."""
+        s = self._short()
+        # process_bar(bar_high, bar_low, cfg); unfavourable for short = bar_high
+        s.process_bar(4999.0, 4975.0, _mtf_cfg())  # 1R fires (low=4975 < 4980), SL → 5000
+        events = s.process_bar(5025.0, 4990.0, _mtf_cfg())  # high=5025 > BE=5000
+        sl_events = [e for e in events if e[0] == "sl"]
+        assert len(sl_events) == 1
+        fill_price = sl_events[0][1]
+        assert fill_price == pytest.approx(5000.0)
+
     # ── Short position ────────────────────────────────────────────────────
 
     def test_short_be_fires_at_1r(self):

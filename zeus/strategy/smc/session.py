@@ -375,6 +375,61 @@ def asian_range_swept(
     return False
 
 
+def get_weekly_bias(df_daily: pd.DataFrame, ltf_ts: pd.Timestamp) -> int:
+    """
+    Return the directional bias of the last fully closed weekly candle.
+
+    Resamples *df_daily* to weekly (Monday-open, Sunday-close, label='left') and
+    finds the last completed week strictly before the ISO week that contains
+    *ltf_ts*.  Only a full week (at least 4 trading days) is used; partial
+    first/last weeks are discarded.
+
+    Args:
+        df_daily: Daily OHLCV DataFrame with a DatetimeIndex (UTC or tz-naive).
+        ltf_ts:   Timestamp of the current LTF bar.
+
+    Returns:
+        BULLISH (+1) if weekly close > open,
+        BEARISH (-1) if weekly close < open,
+        0           if equal or no prior complete week exists.
+    """
+    if df_daily is None or len(df_daily) == 0:
+        return 0
+
+    try:
+        agg = {"open": "first", "high": "max", "low": "min", "close": "last"}
+        if "volume" in df_daily.columns:
+            agg["volume"] = "sum"
+        df_weekly = (
+            df_daily.resample("W-MON", label="left", closed="left")
+            .agg(agg)
+            .dropna(subset=["open"])
+        )
+    except Exception:
+        return 0
+
+    if df_weekly.empty:
+        return 0
+
+    # Find the Monday that opens the current week
+    ts_utc = _tz_naive_utc(ltf_ts)
+    current_week_start = ts_utc - pd.Timedelta(days=ts_utc.weekday())
+    current_week_start = current_week_start.normalize()
+
+    idx = df_weekly.index.searchsorted(current_week_start, side="left") - 1
+    if idx < 0:
+        return 0
+
+    row   = df_weekly.iloc[idx]
+    close = float(row["close"])
+    open_ = float(row["open"])
+    if close > open_:
+        return BULLISH
+    if close < open_:
+        return BEARISH
+    return 0
+
+
 def get_daily_bias(df_daily: pd.DataFrame, ltf_ts: pd.Timestamp) -> int:
     """
     Return the directional bias of the last fully closed daily candle.

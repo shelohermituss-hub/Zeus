@@ -34,6 +34,7 @@ from zeus.strategy.smc.indicator import SMCResult, analyze
 from zeus.strategy.smc.session import (
     asian_range_swept,
     get_daily_bias,
+    get_weekly_bias,
     is_in_killzone,
     killzone_name,
 )
@@ -86,6 +87,7 @@ class MTFSMCStrategy(Strategy):
         mss_lookback:        int                 = 10,
         require_entry_fvg:   bool                = True,
         require_asian_sweep:      bool = False,
+        require_weekly_bias:      bool = False,
         max_daily_signals:        int  = 2,
         max_signals_per_session:  int  = 1,
     ) -> None:
@@ -110,6 +112,7 @@ class MTFSMCStrategy(Strategy):
         self._mss_lookback        = mss_lookback
         self._require_entry_fvg   = require_entry_fvg
         self._require_asian_sweep     = require_asian_sweep
+        self._require_weekly_bias     = require_weekly_bias
         self._max_daily_signals       = max_daily_signals
         self._max_signals_per_session = max_signals_per_session
         self._min_htf_bars            = max(swing_length, internal_length) * 2
@@ -176,6 +179,18 @@ class MTFSMCStrategy(Strategy):
                 return Signal(
                     SignalType.NONE, 0.0,
                     f"daily bias {db_name} conflicts with HTF {dir_name}",
+                    bar_index,
+                )
+
+        # ── 3.55. Weekly bias alignment gate ─────────────────────────────
+        if self._require_weekly_bias and self._df_daily is not None:
+            wb = get_weekly_bias(self._df_daily, ltf_ts)
+            if wb != 0 and wb != direction:
+                wb_name  = "bullish" if wb == BULLISH else "bearish"
+                dir_name = "bullish" if direction == BULLISH else "bearish"
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    f"weekly bias {wb_name} conflicts with HTF {dir_name}",
                     bar_index,
                 )
 
