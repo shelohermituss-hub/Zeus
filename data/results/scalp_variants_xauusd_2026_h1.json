@@ -1,0 +1,232 @@
+{
+  "meta": {
+    "symbol": "XAUUSD",
+    "start": "2026-01-01",
+    "end": "2026-06-30",
+    "strategy": "ScalpSMCStrategy",
+    "cascade": "1H \u2192 1M",
+    "shared_params": {
+      "sl_pips": 6.0,
+      "max_sl_pips": 10.0,
+      "killzone_only": true,
+      "require_entry_fvg": true,
+      "partial_close": "scalp (1.5R/2.5R/4R)"
+    }
+  },
+  "variants": [
+    {
+      "id": "V1",
+      "name": "Baseline",
+      "config": {
+        "zones": null,
+        "score": 3.0,
+        "choch": false,
+        "daily": 5,
+        "sess": 2
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10492.62,
+        "net_pnl": 492.62,
+        "total_return_pct": 4.93,
+        "n_trades": 90,
+        "win_rate": 26.7,
+        "avg_win": 236.72,
+        "avg_loss": -101.74,
+        "profit_factor": 1.0949,
+        "max_drawdown_pct": 13.42,
+        "sharpe_ratio": 0.001,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2",
+      "name": "No FVG (OB+OTE)",
+      "config": {
+        "zones": [
+          "OB",
+          "OTE"
+        ],
+        "score": 3.0,
+        "choch": false,
+        "daily": 5,
+        "sess": 2
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11186.02,
+        "net_pnl": 1186.02,
+        "total_return_pct": 11.86,
+        "n_trades": 40,
+        "win_rate": 32.5,
+        "avg_win": 241.64,
+        "avg_loss": -102.91,
+        "profit_factor": 1.6066,
+        "max_drawdown_pct": 6.32,
+        "sharpe_ratio": 0.0027,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V3",
+      "name": "OTE only",
+      "config": {
+        "zones": [
+          "OTE"
+        ],
+        "score": 3.0,
+        "choch": false,
+        "daily": 5,
+        "sess": 2
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9900.0,
+        "net_pnl": -100.0,
+        "total_return_pct": -1.0,
+        "n_trades": 1,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -100.0,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 1.48,
+        "sharpe_ratio": -0.0014,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V4",
+      "name": "Score \u2265 5",
+      "config": {
+        "zones": null,
+        "score": 5.0,
+        "choch": false,
+        "daily": 5,
+        "sess": 2
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9848.53,
+        "net_pnl": -151.47,
+        "total_return_pct": -1.51,
+        "n_trades": 5,
+        "win_rate": 20.0,
+        "avg_win": 147.01,
+        "avg_loss": -99.49,
+        "profit_factor": 0.4925,
+        "max_drawdown_pct": 3.86,
+        "sharpe_ratio": -0.0011,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V5",
+      "name": "CHoCH candle",
+      "config": {
+        "zones": null,
+        "score": 3.0,
+        "choch": true,
+        "daily": 5,
+        "sess": 2
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11099.37,
+        "net_pnl": 1099.37,
+        "total_return_pct": 10.99,
+        "n_trades": 82,
+        "win_rate": 26.8,
+        "avg_win": 256.57,
+        "avg_loss": -103.3,
+        "profit_factor": 1.2419,
+        "max_drawdown_pct": 8.74,
+        "sharpe_ratio": 0.002,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V6",
+      "name": "OB+OTE + Score 5",
+      "config": {
+        "zones": [
+          "OB",
+          "OTE"
+        ],
+        "score": 5.0,
+        "choch": false,
+        "daily": 5,
+        "sess": 2
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9848.53,
+        "net_pnl": -151.47,
+        "total_return_pct": -1.51,
+        "n_trades": 5,
+        "win_rate": 20.0,
+        "avg_win": 147.01,
+        "avg_loss": -99.49,
+        "profit_factor": 0.4925,
+        "max_drawdown_pct": 3.86,
+        "sharpe_ratio": -0.0011,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V7",
+      "name": "OB+OTE + CHoCH",
+      "config": {
+        "zones": [
+          "OB",
+          "OTE"
+        ],
+        "score": 3.0,
+        "choch": true,
+        "daily": 5,
+        "sess": 2
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10689.34,
+        "net_pnl": 689.34,
+        "total_return_pct": 6.89,
+        "n_trades": 36,
+        "win_rate": 30.6,
+        "avg_win": 238.38,
+        "avg_loss": -101.73,
+        "profit_factor": 1.3566,
+        "max_drawdown_pct": 6.32,
+        "sharpe_ratio": 0.0018,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V8",
+      "name": "Full strict",
+      "config": {
+        "zones": [
+          "OB",
+          "OTE"
+        ],
+        "score": 5.0,
+        "choch": true,
+        "daily": 3,
+        "sess": 1
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9948.01,
+        "net_pnl": -51.99,
+        "total_return_pct": -0.52,
+        "n_trades": 3,
+        "win_rate": 33.3,
+        "avg_win": 147.01,
+        "avg_loss": -99.5,
+        "profit_factor": 0.7388,
+        "max_drawdown_pct": 2.09,
+        "sharpe_ratio": -0.0005,
+        "total_fees": 0.0
+      }
+    }
+  ]
+}
