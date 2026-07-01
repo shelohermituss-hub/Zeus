@@ -1282,3 +1282,138 @@ class TestCHoCHCandleGate:
         df = self._make_ltf(bar_close=2000.0, bar_open=2000.0)  # doji
         sig = self._run(df, s, BULLISH)
         assert "choch" not in sig.reason.lower()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TestPremiumDiscountFilter — Rec 12: P/D zone alignment gate
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestPremiumDiscountFilter:
+    """
+    require_pd_filter=True: longs are only allowed when price is below the HTF
+    50 % midpoint (discount zone); shorts only when price is above (premium zone).
+    When no FibZone is available the gate passes silently (fail-open for this filter).
+    """
+    from zeus.strategy.smc.fibonacci import FibZone as _FibZone
+
+    def _make_strategy(self, require: bool = True) -> MTFSMCStrategy:
+        return MTFSMCStrategy(
+            df_htf=_make_htf(),
+            killzone_only=False,
+            swing_length=10,
+            internal_length=5,
+            require_pd_filter=require,
+        )
+
+    def _make_fib_zone(self, swing_high: float, swing_low: float,
+                       direction: int) -> "FibZone":
+        from zeus.strategy.smc.fibonacci import FibZone
+        return FibZone(
+            swing_high=swing_high, swing_low=swing_low,
+            direction=direction,
+            leg_high_bar=50, leg_low_bar=40, formed_at=60,
+        )
+
+    def _make_ltf(self, close_price: float, hour: int = 9,
+                  n: int = 200) -> pd.DataFrame:
+        end = pd.Timestamp(f"2024-01-15 {hour:02d}:00:00")
+        idx = pd.date_range(end=end, periods=n, freq="1min")
+        # Bullish-close entry bars (close > open) to avoid CHoCH gate interference
+        closes = np.full(n, close_price)
+        opens  = closes - 1.0
+        return pd.DataFrame(
+            {"open": opens, "high": closes + 2.0, "low": opens - 2.0,
+             "close": closes, "volume": [10.0] * n},
+            index=idx,
+        )
+
+    def _run(self, df: pd.DataFrame, s: MTFSMCStrategy,
+             direction: int = BULLISH,
+             fib_zones: list | None = None) -> "Signal":
+        mock_cs = MagicMock()
+        mock_cs.active_count = 5
+        mock_cs.confidence   = 0.5
+        mock_cs.grade.return_value = MagicMock(value="C")
+        mock_htf = MagicMock()
+        mock_htf.swing_bias    = direction
+        mock_htf.internal_bias = direction
+        mock_htf.fib_zones     = fib_zones or []
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=mock_htf), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence", return_value=mock_cs):
+            return s.generate_signal(df, bar_index=len(df) - 1)
+
+    # ── LONG: must be in discount zone (price < 50%) ──────────────────────
+
+    def test_long_in_discount_passes(self):
+        """Long when price is below 50% midpoint — valid discount entry."""
+        s = self._make_strategy()
+        # swing_high=2100, swing_low=1900 → 50% = 2000
+        fz = self._make_fib_zone(swing_high=2100.0, swing_low=1900.0, direction=BULLISH)
+        df = self._make_ltf(close_price=1950.0)   # 1950 < 2000 = discount
+        sig = self._run(df, s, BULLISH, fib_zones=[fz])
+        assert "premium" not in sig.reason.lower()
+        assert "discount" not in sig.reason.lower()
+
+    def test_long_in_premium_rejected(self):
+        """Long when price is above 50% midpoint — premium zone, should reject."""
+        s = self._make_strategy()
+        fz = self._make_fib_zone(swing_high=2100.0, swing_low=1900.0, direction=BULLISH)
+        df = self._make_ltf(close_price=2050.0)   # 2050 > 2000 = premium
+        sig = self._run(df, s, BULLISH, fib_zones=[fz])
+        assert sig.type == SignalType.NONE
+        assert "premium" in sig.reason.lower()
+
+    def test_long_at_50pct_allowed(self):
+        """Long exactly at 50% equilibrium is allowed (not > 50%, so not premium)."""
+        s = self._make_strategy()
+        fz = self._make_fib_zone(swing_high=2100.0, swing_low=1900.0, direction=BULLISH)
+        df = self._make_ltf(close_price=2000.0)   # exactly at 50%
+        sig = self._run(df, s, BULLISH, fib_zones=[fz])
+        assert "premium" not in sig.reason.lower()
+
+    # ── SHORT: must be in premium zone (price > 50%) ──────────────────────
+
+    def test_short_in_premium_passes(self):
+        """Short when price is above 50% midpoint — valid premium entry."""
+        s = self._make_strategy()
+        fz = self._make_fib_zone(swing_high=2100.0, swing_low=1900.0, direction=BEARISH)
+        df = self._make_ltf(close_price=2050.0)   # 2050 > 2000 = premium
+        # For SHORT, ensure bearish close
+        df["close"] = df["close"] - 1.0
+        df["open"]  = df["close"] + 2.0
+        sig = self._run(df, s, BEARISH, fib_zones=[fz])
+        assert "discount" not in sig.reason.lower()
+
+    def test_short_in_discount_rejected(self):
+        """Short when price is below 50% midpoint — discount zone, should reject."""
+        s = self._make_strategy()
+        fz = self._make_fib_zone(swing_high=2100.0, swing_low=1900.0, direction=BEARISH)
+        df = self._make_ltf(close_price=1950.0)
+        # bearish close
+        df["close"] = df["close"] - 1.0
+        df["open"]  = df["close"] + 2.0
+        sig = self._run(df, s, BEARISH, fib_zones=[fz])
+        assert sig.type == SignalType.NONE
+        assert "discount" in sig.reason.lower()
+
+    # ── No FibZone available → gate passes silently ──────────────────────
+
+    def test_no_fib_zone_passes_silently(self):
+        """When no FibZone is available, the filter does not block the signal."""
+        s = self._make_strategy()
+        df = self._make_ltf(close_price=2050.0)   # would be premium, but no FibZone
+        sig = self._run(df, s, BULLISH, fib_zones=[])
+        assert "premium" not in sig.reason.lower()
+
+    # ── Gate disabled ─────────────────────────────────────────────────────
+
+    def test_gate_disabled_premium_entry_allowed(self):
+        """When require_pd_filter=False, premium-zone longs are not blocked."""
+        s = self._make_strategy(require=False)
+        fz = self._make_fib_zone(swing_high=2100.0, swing_low=1900.0, direction=BULLISH)
+        df = self._make_ltf(close_price=2050.0)   # premium
+        sig = self._run(df, s, BULLISH, fib_zones=[fz])
+        assert "premium" not in sig.reason.lower()

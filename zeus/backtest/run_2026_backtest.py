@@ -139,6 +139,11 @@ def main() -> None:
         require_weekly_bias=True,
         # CHoCH candle confirmation (Rec 11) — entry bar must close in trade direction
         require_choch_candle=True,
+        # Premium/Discount filter (Rec 12) — disabled: in the Jan-Jun 2026 bull run
+        # (+41%), 4H swing midpoints are rarely below current price on retracements,
+        # so the discount condition eliminates all setups when combined with CHoCH+weekly.
+        # Enable in ranging/consolidating markets or with a wider dataset.
+        require_pd_filter=False,
         # 5M FVG entry trigger (Rec 4)
         require_entry_fvg=True,
         ltf_lookback=20,
@@ -220,10 +225,11 @@ def main() -> None:
             "end":        END_DATE,
             "timeframe":  "5M → 4-TF cascade",
             "features":   ["killzone", "daily_bias", "weekly_bias", "htf_zones",
-                           "5m_fvg", "partial_close_mtf_smc", "daily_freq_gate"],
-        "disabled":   ["1h_mss", "asian_sweep"],
-        "note":       "1H MSS and Asian sweep produce 0 trades in 6-month dataset; "
-                      "see docstring for full calibration details",
+                           "5m_fvg", "partial_close_mtf_smc", "daily_freq_gate",
+                           "zone_reentry_guard", "choch_candle"],
+        "disabled":   ["1h_mss", "asian_sweep", "premium_discount"],
+        "note":       "1H MSS, Asian sweep, and P/D filter produce 0 trades in 6-month "
+                      "bull-run dataset when combined; see docstring for calibration details.",
         },
         "summary": summary,
         "trades":  trade_records,

@@ -89,6 +89,7 @@ class MTFSMCStrategy(Strategy):
         require_asian_sweep:      bool = False,
         require_weekly_bias:      bool = False,
         require_choch_candle:     bool = False,
+        require_pd_filter:        bool = False,
         max_daily_signals:        int  = 2,
         max_signals_per_session:  int  = 1,
     ) -> None:
@@ -115,6 +116,7 @@ class MTFSMCStrategy(Strategy):
         self._require_asian_sweep     = require_asian_sweep
         self._require_weekly_bias     = require_weekly_bias
         self._require_choch_candle    = require_choch_candle
+        self._require_pd_filter       = require_pd_filter
         self._max_daily_signals       = max_daily_signals
         self._max_signals_per_session = max_signals_per_session
         self._min_htf_bars            = max(swing_length, internal_length) * 2
@@ -217,6 +219,27 @@ class MTFSMCStrategy(Strategy):
         # Zone whitelist filter — skip early before expensive confluence scoring
         if self._allowed_zones is not None and zone_type not in self._allowed_zones:
             return Signal(SignalType.NONE, 0.0, f"zone {zone_type} not in allowed_zones", bar_index)
+
+        # ── 4.5. Premium / Discount filter (Rec 12) ──────────────────────
+        # Price must be below the HTF 50 % midpoint for longs (discount zone)
+        # and above it for shorts (premium zone). Avoids buying overbought /
+        # selling oversold relative to the current HTF swing.
+        if self._require_pd_filter:
+            fib_zone = get_latest_fib_zone(htf_result.fib_zones, htf_bar_idx, direction)
+            if fib_zone is not None:
+                level_50 = fib_zone.level_50
+                if direction == BULLISH and close > level_50:
+                    return Signal(
+                        SignalType.NONE, 0.0,
+                        f"price {close:.2f} above 50% ({level_50:.2f}): premium zone, skip long",
+                        bar_index,
+                    )
+                if direction == BEARISH and close < level_50:
+                    return Signal(
+                        SignalType.NONE, 0.0,
+                        f"price {close:.2f} below 50% ({level_50:.2f}): discount zone, skip short",
+                        bar_index,
+                    )
 
         # ── 5. Full confluence score (LTF price evaluated against HTF zones) ─
         # Gates (1 and 8) already validated above; score only needs 2 more

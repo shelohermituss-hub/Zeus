@@ -11,13 +11,16 @@
       "htf_zones",
       "5m_fvg",
       "partial_close_mtf_smc",
-      "daily_freq_gate"
+      "daily_freq_gate",
+      "zone_reentry_guard",
+      "choch_candle"
     ],
     "disabled": [
       "1h_mss",
-      "asian_sweep"
+      "asian_sweep",
+      "premium_discount"
     ],
-    "note": "1H MSS and Asian sweep produce 0 trades in 6-month dataset; see docstring for full calibration details"
+    "note": "1H MSS, Asian sweep, and P/D filter produce 0 trades in 6-month bull-run dataset when combined; see docstring for calibration details."
   },
   "summary": {
     "initial_balance": 10000.0,
@@ -35,7 +38,7 @@
   },
   "trades": [
     {
-      "trade_id": "cd71ee65-d940-4b76-a7fc-d57c86dab9b6",
+      "trade_id": "f8c2586e-0d19-4416-9727-500b3cd6a3b5",
       "side": "buy",
       "entry": 5069.649,
       "sl": 5049.649,
@@ -46,7 +49,7 @@
       "closed_at": "2026-02-11T12:40:00"
     },
     {
-      "trade_id": "417bda14-6c25-4088-bbd4-02f9b44427ce",
+      "trade_id": "47f4d721-8483-4538-8cc2-28cefa3053e7",
       "side": "buy",
       "entry": 5079.851,
       "sl": 5059.851,
@@ -57,7 +60,7 @@
       "closed_at": "2026-02-12T10:45:00"
     },
     {
-      "trade_id": "4775e35a-ef57-465c-8c54-bacc56721407",
+      "trade_id": "9defee53-631e-4b9b-a09b-73e82a6e3d85",
       "side": "buy",
       "entry": 5070.749,
       "sl": 5050.749,
@@ -68,7 +71,7 @@
       "closed_at": "2026-02-12T14:55:00"
     },
     {
-      "trade_id": "c5c424a7-e08e-4a7b-8890-81c7cc0b93fb",
+      "trade_id": "6212acc0-73e0-4f2b-bcdc-b22656de904c",
       "side": "buy",
       "entry": 5188.563,
       "sl": 5168.563,
@@ -79,7 +82,7 @@
       "closed_at": "2026-03-01T23:40:00"
     },
     {
-      "trade_id": "1b01082f-52a5-4f9c-80a1-be343a735b02",
+      "trade_id": "c4f08480-8ef2-485f-86cf-55928695ee5a",
       "side": "sell",
       "entry": 4574.37,
       "sl": 4594.37,
@@ -90,7 +93,7 @@
       "closed_at": "2026-05-04T10:00:00"
     },
     {
-      "trade_id": "7bb1f5ae-b1d3-44a1-aa3e-06af1932611d",
+      "trade_id": "a3c97324-69bb-4883-bf11-c06c1e1baa1b",
       "side": "sell",
       "entry": 4569.251,
       "sl": 4589.251,
@@ -101,7 +104,7 @@
       "closed_at": "2026-05-05T22:55:00"
     },
     {
-      "trade_id": "f1b41290-85a6-448c-8309-dafae029d916",
+      "trade_id": "08c465c7-35d6-4893-86ae-9e7bb812e1a7",
       "side": "sell",
       "entry": 4494.336,
       "sl": 4514.336,
