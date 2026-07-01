@@ -30,7 +30,7 @@ from __future__ import annotations
 import pandas as pd
 
 from zeus.strategy.base import Signal, SignalType, Strategy
-from zeus.strategy.confluence import best_confluence
+from zeus.strategy.confluence import PatternGrade, best_confluence
 from zeus.strategy.smc.indicator import SMCResult, analyze
 from zeus.strategy.smc.order_block import get_active_order_blocks
 from zeus.strategy.smc.fvg import get_active_fvgs
@@ -55,6 +55,9 @@ class MTFSMCStrategy(Strategy):
         zone_tolerance_pct: ±% band around zone edges for "price inside zone" test.
     """
 
+    # Grade rank used for min_grade comparison (higher = better quality)
+    _GRADE_RANK: dict[str, int] = {"A": 3, "B": 2, "C": 1, "F": 0}
+
     def __init__(
         self,
         df_htf:              pd.DataFrame,
@@ -67,6 +70,10 @@ class MTFSMCStrategy(Strategy):
         atr_period:          int   = 200,
         ltf_lookback:        int   = 20,
         zone_tolerance_pct:  float = 0.003,
+        allowed_zones:       list[str] | None  = None,
+        min_grade:           PatternGrade       = PatternGrade.C,
+        grade_b_threshold:   float              = 6.0,
+        grade_a_threshold:   float              = 8.0,
     ) -> None:
         self._df_htf             = df_htf
         self._min_htf_score      = min_htf_score
@@ -78,6 +85,10 @@ class MTFSMCStrategy(Strategy):
         self._atr_period         = atr_period
         self._ltf_lookback       = ltf_lookback
         self._zone_tol           = zone_tolerance_pct
+        self._allowed_zones      = set(allowed_zones) if allowed_zones is not None else None
+        self._min_grade          = min_grade
+        self._grade_b_threshold  = grade_b_threshold
+        self._grade_a_threshold  = grade_a_threshold
         self._min_htf_bars       = max(swing_length, internal_length) * 2
 
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
@@ -131,6 +142,10 @@ class MTFSMCStrategy(Strategy):
         if zone_type is None:
             return Signal(SignalType.NONE, 0.0, "price outside HTF zone", bar_index)
 
+        # Zone whitelist filter — skip early before expensive confluence scoring
+        if self._allowed_zones is not None and zone_type not in self._allowed_zones:
+            return Signal(SignalType.NONE, 0.0, f"zone {zone_type} not in allowed_zones", bar_index)
+
         # ── 5. Full confluence score (LTF price evaluated against HTF zones) ─
         # Gates (1 and 8) already validated above; score only needs 2 more
         # active factors (zone itself counts as one → min_score=3).
@@ -140,6 +155,19 @@ class MTFSMCStrategy(Strategy):
         )
         if cs is None:
             return Signal(SignalType.NONE, 0.0, "HTF score below threshold", bar_index)
+
+        # Grade filter — applied with configurable A/B thresholds
+        grade = cs.grade(
+            min_score=3.0,
+            b_threshold=self._grade_b_threshold,
+            a_threshold=self._grade_a_threshold,
+        )
+        if self._GRADE_RANK.get(grade.value, 0) < self._GRADE_RANK.get(self._min_grade.value, 0):
+            return Signal(
+                SignalType.NONE, 0.0,
+                f"grade {grade.value} below min {self._min_grade.value} (score={cs.active_count})",
+                bar_index,
+            )
 
         # ── 6. LTF internal bias confirmation ────────────────────────────
         if not self._ltf_confirms(df, bar_index, direction):
@@ -158,7 +186,6 @@ class MTFSMCStrategy(Strategy):
 
         # ── 8. Emit signal ────────────────────────────────────────────────
         stype  = SignalType.LONG if direction == BULLISH else SignalType.SHORT
-        grade  = cs.grade(min_score=3.0)
         reason = (
             f"MTF grade={grade.value} score={cs.active_count}/10 "
             f"zone={zone_type} SL={sl_pips:.1f}pips"
