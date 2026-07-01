@@ -103,6 +103,28 @@ class PartialCloseConfig:
             trailing=TrailingConfig(activate_at_r=999.0, trail_r=5.0, hard_close_r=999.0),
         )
 
+    @staticmethod
+    def scalp() -> PartialCloseConfig:
+        """
+        Scalp profile — tight SL (5–8 pips); fast ladder exits.
+
+          1.5R → SL to breakeven only (protect capital quickly)
+          2.5R → close 60 % of position (40 % remaining)
+          4R   → close 100 % of remaining (final exit)
+
+        Rationale: at 5-pip SL each R = $5 per lot. The tighter SL means
+        the runner doesn't need to go far to capture 4R; hard close avoids
+        giving back profits on a reversal.
+        """
+        return PartialCloseConfig(
+            levels=[
+                PartialCloseLevel(r_multiple=1.5, close_fraction=0.0,  sl_to_r=0.0),
+                PartialCloseLevel(r_multiple=2.5, close_fraction=0.60, sl_to_r=None),
+                PartialCloseLevel(r_multiple=4.0, close_fraction=1.0,  sl_to_r=None),
+            ],
+            trailing=TrailingConfig(activate_at_r=999.0, trail_r=5.0, hard_close_r=999.0),
+        )
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Runtime state (one instance per open position)

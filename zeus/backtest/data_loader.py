@@ -98,21 +98,23 @@ def resample_ohlcv(df: pd.DataFrame, freq: str) -> pd.DataFrame:
 
 def build_timeframes(df_m1: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """
-    Resample M1 data to all timeframes needed by MTFSMCStrategy.
+    Resample M1 data to all timeframes used by swing and scalp strategies.
 
     Returns
     -------
     dict with keys:
-        ``"m1"``   — raw M1
-        ``"5min"`` — 5-minute (LTF entry bars)
-        ``"1h"``   — 1-hour  (MSS gate)
-        ``"4h"``   — 4-hour  (HTF SMC analysis)
-        ``"1d"``   — daily   (daily bias gate)
+        ``"m1"``   — raw M1          (ScalpSMCStrategy LTF entry bars)
+        ``"5min"`` — 5-minute        (MTFSMCStrategy LTF entry bars)
+        ``"15min"``— 15-minute       (ScalpSMCStrategy MSS gate)
+        ``"1h"``   — 1-hour          (MTFSMCStrategy MSS gate / ScalpSMCStrategy HTF)
+        ``"4h"``   — 4-hour          (MTFSMCStrategy HTF SMC analysis)
+        ``"1d"``   — daily           (daily bias gate, both strategies)
     """
     return {
-        "m1":   df_m1,
-        "5min": resample_ohlcv(df_m1, "5min"),
-        "1h":   resample_ohlcv(df_m1, "1h"),
-        "4h":   resample_ohlcv(df_m1, "4h"),
-        "1d":   resample_ohlcv(df_m1, "1D"),
+        "m1":    df_m1,
+        "5min":  resample_ohlcv(df_m1, "5min"),
+        "15min": resample_ohlcv(df_m1, "15min"),
+        "1h":    resample_ohlcv(df_m1, "1h"),
+        "4h":    resample_ohlcv(df_m1, "4h"),
+        "1d":    resample_ohlcv(df_m1, "1D"),
     }
