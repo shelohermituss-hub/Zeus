@@ -42,6 +42,7 @@ from zeus.strategy.smc.session import (
     prev_session_liquidity_swept,
 )
 from zeus.strategy.smc.approach import compute_approach_quality
+from zeus.strategy.smc.candle_pattern import detect_entry_candle
 from zeus.strategy.smc.ltf_sweep import ltf_liquidity_sweep
 from zeus.strategy.smc.order_block import get_active_order_blocks
 from zeus.strategy.smc.fvg import get_active_fvgs
@@ -108,6 +109,8 @@ class MTFSMCStrategy(Strategy):
         ltf_sweep_lookback:           int   = 3,
         require_ote:                  bool  = False,
         require_daily_bias:           bool  = False,
+        require_entry_pattern:        bool  = False,
+        min_wick_ratio:               float = 0.60,
         max_daily_signals:            int  = 2,
         max_signals_per_session:      int  = 1,
     ) -> None:
@@ -148,6 +151,8 @@ class MTFSMCStrategy(Strategy):
         self._ltf_sweep_lookback          = ltf_sweep_lookback
         self._require_ote                 = require_ote
         self._require_daily_bias          = require_daily_bias
+        self._require_entry_pattern       = require_entry_pattern
+        self._min_wick_ratio              = min_wick_ratio
         self._max_daily_signals           = max_daily_signals
 
         # Lazy cache — populated on first generate_signal() call with the LTF df
@@ -397,6 +402,21 @@ class MTFSMCStrategy(Strategy):
                 return Signal(
                     SignalType.NONE, 0.0,
                     f"LTF sweep not confirmed: {sweep_reason}",
+                    bar_index,
+                )
+
+        # ── 6.4. 1M candle pattern gate (Piste B) ────────────────────────
+        # Require a qualifying entry candle shape at the 1M entry bar:
+        #   LONG  → hammer (lower wick ≥ min_wick_ratio) or bullish engulfing
+        #   SHORT → shooting star (upper wick ≥ min_wick_ratio) or bearish engulfing
+        if self._require_entry_pattern:
+            pattern_ok, pattern_reason = detect_entry_candle(
+                df, bar_index, direction, self._min_wick_ratio,
+            )
+            if not pattern_ok:
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    f"entry candle pattern not met: {pattern_reason}",
                     bar_index,
                 )
 
