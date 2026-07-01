@@ -172,6 +172,7 @@ def score_confluence(
     poc_tolerance_pct:    float = 0.003,
     fib_50_tolerance_pct: float = 0.003,
     sweep_lookback:       int   = 10,
+    sweep_zone_tol_pct:   float = 0.0,
 ) -> ConfluenceScore:
     """
     Evaluate all 10 confluence factors for one direction at one bar.
@@ -186,6 +187,9 @@ def score_confluence(
         poc_tolerance_pct:    ±% band around POC for factor 6.
         fib_50_tolerance_pct: ±% band around Fib 50 % for factor 10.
         sweep_lookback:       Max bars since last sweep to count (factor 4).
+        sweep_zone_tol_pct:   ±% tolerance for sweep-vs-zone-edge alignment
+                              (factor 4 intra-zone confirmation). 0.0 disables
+                              the zone check (backward-compatible default).
 
     Returns:
         ConfluenceScore with 10 FactorResult entries.
@@ -194,7 +198,7 @@ def score_confluence(
         _f1_market_structure(result, direction),
         _f2_fibonacci_ote(result, price, bar_index, direction),
         _f3_order_block(result, price, bar_index, direction),
-        _f4_liquidity_sweep(result, bar_index, direction, sweep_lookback),
+        _f4_liquidity_sweep(result, bar_index, direction, sweep_lookback, sweep_zone_tol_pct),
         _f5_fvg(result, price, bar_index, direction),
         _f6_poc(result, price, poc_tolerance_pct),
         _f7_killzone(timestamp),
@@ -291,17 +295,77 @@ def _f3_order_block(
 
 def _f4_liquidity_sweep(
     result: SMCResult, bar_index: int, direction: int, lookback: int,
+    zone_tol_pct: float = 0.0,
 ) -> FactorResult:
-    """Factor 4 — a recent liquidity sweep confirms the trade direction."""
+    """
+    Factor 4 — a recent sweep confirms the trade direction.
+
+    When zone_tol_pct > 0 the sweep level must also align with the nearest
+    active zone boundary (intra-zone confirmation):
+    - BULLISH: SSL sweep level ≤ nearest bullish zone bottom + tolerance
+    - BEARISH: BSL sweep level ≥ nearest bearish zone top   - tolerance
+
+    This ensures the liquidity grab happened AT the zone, not elsewhere.
+    """
     sweep = last_sweep(result.liquidity_sweeps, bar_index, direction)
     if sweep is None:
         return FactorResult(4, "Liquidity Sweep", False, "no sweep found")
+
     bars_ago = bar_index - sweep.bar_index
-    active   = bars_ago <= lookback
+    if bars_ago > lookback:
+        return FactorResult(
+            4, "Liquidity Sweep", False,
+            f"last sweep {bars_ago} bar(s) ago at {sweep.level:.2f} (>{lookback})",
+        )
+
+    if zone_tol_pct > 0:
+        zone_edge = _nearest_zone_edge(result, bar_index, direction)
+        if zone_edge is not None:
+            tol = zone_edge * zone_tol_pct
+            if direction == BULLISH:
+                zone_ok = sweep.level <= zone_edge + tol
+            else:
+                zone_ok = sweep.level >= zone_edge - tol
+            if not zone_ok:
+                return FactorResult(
+                    4, "Liquidity Sweep", False,
+                    f"sweep {sweep.level:.2f} not at zone edge {zone_edge:.2f}",
+                )
+
     return FactorResult(
-        4, "Liquidity Sweep", active,
+        4, "Liquidity Sweep", True,
         f"sweep {bars_ago} bar(s) ago at {sweep.level:.2f}",
     )
+
+
+def _nearest_zone_edge(result: SMCResult, bar_index: int, direction: int) -> float | None:
+    """
+    Return the relevant zone boundary for sweep alignment (factor 4).
+
+    BULLISH: minimum of active bullish OB lows and FVG bottoms.
+             A sweep at or below this level confirms the zone as a reversal.
+    BEARISH: maximum of active bearish OB highs and FVG tops.
+             A sweep at or above this level confirms the zone as a reversal.
+
+    Returns None when no active zone exists for the given direction.
+    """
+    edges: list[float] = []
+
+    all_obs = (
+        get_active_order_blocks(result.internal_obs, bar_index)
+        + get_active_order_blocks(result.swing_obs, bar_index)
+    )
+    for ob in all_obs:
+        if ob.direction == direction:
+            edges.append(ob.low if direction == BULLISH else ob.high)
+
+    for fvg in get_active_fvgs(result.fvgs, bar_index):
+        if fvg.direction == direction:
+            edges.append(fvg.bottom if direction == BULLISH else fvg.top)
+
+    if not edges:
+        return None
+    return min(edges) if direction == BULLISH else max(edges)
 
 
 def _f5_fvg(

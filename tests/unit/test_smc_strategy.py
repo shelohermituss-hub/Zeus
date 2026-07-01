@@ -76,6 +76,18 @@ class TestSMCStrategyInit:
         assert s.poc_tolerance_pct    == pytest.approx(0.003)
         assert s.fib_50_tolerance_pct == pytest.approx(0.003)
 
+    def test_default_sweep_zone_tol_pct(self):
+        s = SMCStrategy()
+        assert s.sweep_zone_tol_pct == pytest.approx(0.005)
+
+    def test_custom_sweep_zone_tol_pct_stored(self):
+        s = SMCStrategy(sweep_zone_tol_pct=0.01)
+        assert s.sweep_zone_tol_pct == pytest.approx(0.01)
+
+    def test_sweep_zone_tol_pct_zero_disables_zone_check(self):
+        s = SMCStrategy(sweep_zone_tol_pct=0.0)
+        assert s.sweep_zone_tol_pct == pytest.approx(0.0)
+
     def test_default_volume_profile_params(self):
         s = SMCStrategy()
         assert s.vol_num_bins       == 100
@@ -320,11 +332,12 @@ class TestGenerateSignalMocked:
             strategy.generate_signal(df, bar_index=50)
 
             _, kwargs = mock_bc.call_args
-            assert kwargs.get("min_score",           None) == pytest.approx(4.0)
-            assert kwargs.get("poc_tolerance_pct",   None) == pytest.approx(0.005)
+            assert kwargs.get("min_score",            None) == pytest.approx(4.0)
+            assert kwargs.get("poc_tolerance_pct",    None) == pytest.approx(0.005)
             assert kwargs.get("fib_50_tolerance_pct", None) == pytest.approx(0.006)
-            assert kwargs.get("sweep_lookback",      None) == 8
-            assert "timestamp" in kwargs
+            assert kwargs.get("sweep_lookback",       None) == 8
+            assert "timestamp"         in kwargs
+            assert "sweep_zone_tol_pct" in kwargs
 
     def test_analyze_window_is_sliced_to_bar_index(self, strategy, df):
         """analyze() must only see bars up to and including bar_index."""

@@ -40,6 +40,7 @@ from zeus.strategy.confluence import (
     PatternGrade,
     best_confluence,
     score_confluence,
+    _nearest_zone_edge,
 )
 
 
@@ -482,10 +483,19 @@ class TestF3OrderBlock:
 
 class TestF4LiquiditySweep:
     def _cs(self, direction: int, sweeps: list,
-            bar_index: int = 10, lookback: int = 10) -> ConfluenceScore:
-        r = _empty_result(liquidity_sweeps=sweeps)
+            bar_index: int = 10, lookback: int = 10,
+            sweep_zone_tol_pct: float = 0.0,
+            obs: list | None = None, fvgs: list | None = None) -> ConfluenceScore:
+        r = _empty_result(
+            liquidity_sweeps=sweeps,
+            swing_obs=obs or [],
+            fvgs=fvgs or [],
+        )
         return score_confluence(r, price=100.0, bar_index=bar_index,
-                                direction=direction, sweep_lookback=lookback)
+                                direction=direction, sweep_lookback=lookback,
+                                sweep_zone_tol_pct=sweep_zone_tol_pct)
+
+    # ── Basic lookback tests (zone check disabled) ──
 
     def test_active_when_recent_sweep_matches_direction(self):
         sweep = _sweep(BULLISH, bar_index=8)
@@ -511,6 +521,143 @@ class TestF4LiquiditySweep:
         cs = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5)
         # 10 - 5 = 5 <= 5 → active
         assert cs.factors[3].active is True
+
+    # ── Intra-zone confirmation (sweep_zone_tol_pct > 0) ──
+
+    def test_zone_check_active_sweep_at_zone_bottom(self):
+        """SSL sweep at 97.0, bullish OB low=98.0 → 97.0 ≤ 98.0+tol → active."""
+        ob    = _ob(BULLISH, low=98.0, high=102.0)
+        sweep = _sweep(BULLISH, bar_index=8, level=97.0)
+        cs    = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005, obs=[ob])
+        assert cs.factors[3].active is True
+
+    def test_zone_check_active_sweep_below_zone(self):
+        """Sweep well below zone bottom (classic stop-hunt below OB) → active."""
+        ob    = _ob(BULLISH, low=98.0, high=102.0)
+        sweep = _sweep(BULLISH, bar_index=8, level=95.0)
+        cs    = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005, obs=[ob])
+        assert cs.factors[3].active is True
+
+    def test_zone_check_inactive_sweep_above_zone_bottom(self):
+        """Sweep at 101.0, above OB low=98.0 → not at zone edge → inactive."""
+        ob    = _ob(BULLISH, low=98.0, high=102.0)
+        sweep = _sweep(BULLISH, bar_index=8, level=101.0)
+        cs    = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005, obs=[ob])
+        assert cs.factors[3].active is False
+
+    def test_zone_check_detail_mentions_zone_edge_on_failure(self):
+        ob    = _ob(BULLISH, low=98.0, high=102.0)
+        sweep = _sweep(BULLISH, bar_index=8, level=101.0)
+        cs    = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005, obs=[ob])
+        assert "zone edge" in cs.factors[3].detail.lower()
+
+    def test_zone_check_bearish_sweep_above_zone_top(self):
+        """BSL sweep at 103.0, bearish OB high=102.0 → 103.0 ≥ 102.0-tol → active."""
+        ob    = _ob(BEARISH, low=98.0, high=102.0)
+        sweep = _sweep(BEARISH, bar_index=8, level=103.0)
+        cs    = self._cs(BEARISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005, obs=[ob])
+        assert cs.factors[3].active is True
+
+    def test_zone_check_bearish_sweep_below_zone_top_fails(self):
+        """BSL sweep at 97.0 < OB high=102.0-tol → not at zone edge → inactive."""
+        ob    = _ob(BEARISH, low=98.0, high=102.0)
+        sweep = _sweep(BEARISH, bar_index=8, level=97.0)
+        cs    = self._cs(BEARISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005, obs=[ob])
+        assert cs.factors[3].active is False
+
+    def test_zone_check_no_zone_skips_zone_check(self):
+        """No active OB/FVG → zone edge is None → zone check skipped → active."""
+        sweep = _sweep(BULLISH, bar_index=8, level=105.0)
+        cs    = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005)  # no obs, no fvgs
+        assert cs.factors[3].active is True
+
+    def test_zone_check_zero_disables_zone_check(self):
+        """sweep_zone_tol_pct=0.0 → zone check disabled → sweep far above zone still active."""
+        ob    = _ob(BULLISH, low=98.0, high=102.0)
+        sweep = _sweep(BULLISH, bar_index=8, level=105.0)
+        cs    = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.0, obs=[ob])
+        assert cs.factors[3].active is True
+
+    def test_zone_check_fvg_used_as_zone_edge(self):
+        """FVG bottom=97.0, sweep at 96.0 → 96.0 ≤ 97.0+tol → active."""
+        fvg   = _fvg(BULLISH, bottom=97.0, top=100.0, bar_index=0)
+        sweep = _sweep(BULLISH, bar_index=8, level=96.0)
+        cs    = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005, fvgs=[fvg])
+        assert cs.factors[3].active is True
+
+    def test_zone_check_uses_minimum_edge_of_multiple_zones(self):
+        """Two bullish OBs: low=96 and low=98 → zone_edge=96; sweep at 95 → active."""
+        ob1   = _ob(BULLISH, low=98.0, high=102.0)
+        ob2   = _ob(BULLISH, low=96.0, high=100.0)
+        sweep = _sweep(BULLISH, bar_index=8, level=95.0)
+        cs    = self._cs(BULLISH, sweeps=[sweep], bar_index=10, lookback=5,
+                         sweep_zone_tol_pct=0.005, obs=[ob1, ob2])
+        assert cs.factors[3].active is True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# _nearest_zone_edge
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestNearestZoneEdge:
+    """Direct unit tests for the _nearest_zone_edge() private helper."""
+
+    def test_returns_none_when_no_zones(self):
+        r = _empty_result()
+        assert _nearest_zone_edge(r, bar_index=10, direction=BULLISH) is None
+
+    def test_returns_ob_low_for_bullish(self):
+        ob = _ob(BULLISH, low=98.0, high=102.0)
+        r  = _empty_result(swing_obs=[ob])
+        assert _nearest_zone_edge(r, bar_index=10, direction=BULLISH) == pytest.approx(98.0)
+
+    def test_returns_ob_high_for_bearish(self):
+        ob = _ob(BEARISH, low=98.0, high=102.0)
+        r  = _empty_result(swing_obs=[ob])
+        assert _nearest_zone_edge(r, bar_index=10, direction=BEARISH) == pytest.approx(102.0)
+
+    def test_ignores_wrong_direction_ob(self):
+        ob = _ob(BEARISH, low=98.0, high=102.0)
+        r  = _empty_result(swing_obs=[ob])
+        assert _nearest_zone_edge(r, bar_index=10, direction=BULLISH) is None
+
+    def test_returns_fvg_bottom_for_bullish(self):
+        fvg = _fvg(BULLISH, bottom=97.0, top=100.0, bar_index=0)
+        r   = _empty_result(fvgs=[fvg])
+        assert _nearest_zone_edge(r, bar_index=10, direction=BULLISH) == pytest.approx(97.0)
+
+    def test_returns_fvg_top_for_bearish(self):
+        fvg = _fvg(BEARISH, bottom=98.0, top=103.0, bar_index=0)
+        r   = _empty_result(fvgs=[fvg])
+        assert _nearest_zone_edge(r, bar_index=10, direction=BEARISH) == pytest.approx(103.0)
+
+    def test_bullish_returns_minimum_of_multiple_zones(self):
+        ob1 = _ob(BULLISH, low=96.0, high=100.0)
+        ob2 = _ob(BULLISH, low=98.0, high=102.0)
+        r   = _empty_result(swing_obs=[ob1, ob2])
+        assert _nearest_zone_edge(r, bar_index=10, direction=BULLISH) == pytest.approx(96.0)
+
+    def test_bearish_returns_maximum_of_multiple_zones(self):
+        ob1 = _ob(BEARISH, low=98.0, high=102.0)
+        ob2 = _ob(BEARISH, low=100.0, high=105.0)
+        r   = _empty_result(swing_obs=[ob1, ob2])
+        assert _nearest_zone_edge(r, bar_index=10, direction=BEARISH) == pytest.approx(105.0)
+
+    def test_mixes_ob_and_fvg_edges(self):
+        ob  = _ob(BULLISH, low=98.0, high=102.0)
+        fvg = _fvg(BULLISH, bottom=95.0, top=99.0, bar_index=0)
+        r   = _empty_result(swing_obs=[ob], fvgs=[fvg])
+        # min(98.0, 95.0) = 95.0
+        assert _nearest_zone_edge(r, bar_index=10, direction=BULLISH) == pytest.approx(95.0)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

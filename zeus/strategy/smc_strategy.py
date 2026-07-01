@@ -52,6 +52,8 @@ class SMCStrategy(Strategy):
         poc_tolerance_pct:   ±% band around POC for factor 6.
         fib_50_tolerance_pct: ±% band around Fibonacci 50% for factor 10.
         sweep_lookback:      Max bars since last liquidity sweep for factor 4.
+        sweep_zone_tol_pct:  ±% tolerance for sweep-vs-zone-edge check (factor 4).
+                             Set to 0.0 to disable the intra-zone confirmation.
         df_daily:            Optional daily OHLCV DataFrame for the 1D bias gate.
                              When provided, signals that conflict with the last
                              closed daily candle direction are rejected.
@@ -69,6 +71,7 @@ class SMCStrategy(Strategy):
         poc_tolerance_pct:   float = 0.003,
         fib_50_tolerance_pct: float = 0.003,
         sweep_lookback:      int   = 10,
+        sweep_zone_tol_pct:  float = 0.005,
         df_daily:            pd.DataFrame | None = None,
     ) -> None:
         self.swing_length        = swing_length
@@ -81,6 +84,7 @@ class SMCStrategy(Strategy):
         self.poc_tolerance_pct   = poc_tolerance_pct
         self.fib_50_tolerance_pct = fib_50_tolerance_pct
         self.sweep_lookback      = sweep_lookback
+        self.sweep_zone_tol_pct  = sweep_zone_tol_pct
         self.df_daily            = df_daily
 
         self._min_bars = max(swing_length, internal_length) * 2
@@ -119,6 +123,7 @@ class SMCStrategy(Strategy):
             poc_tolerance_pct=self.poc_tolerance_pct,
             fib_50_tolerance_pct=self.fib_50_tolerance_pct,
             sweep_lookback=self.sweep_lookback,
+            sweep_zone_tol_pct=self.sweep_zone_tol_pct,
         )
 
         if cs is None:

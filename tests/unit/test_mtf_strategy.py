@@ -99,6 +99,14 @@ class TestMTFSMCStrategyInit:
         s = MTFSMCStrategy(df_htf=_make_htf(), swing_length=50, internal_length=5)
         assert s._min_htf_bars == 100  # max(50,5)*2
 
+    def test_sweep_zone_tol_pct_default(self):
+        s = MTFSMCStrategy(df_htf=_make_htf())
+        assert s._sweep_zone_tol_pct == pytest.approx(0.005)
+
+    def test_sweep_zone_tol_pct_custom(self):
+        s = MTFSMCStrategy(df_htf=_make_htf(), sweep_zone_tol_pct=0.01)
+        assert s._sweep_zone_tol_pct == pytest.approx(0.01)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Kill Zone gate

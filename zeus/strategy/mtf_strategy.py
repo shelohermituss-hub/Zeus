@@ -77,6 +77,7 @@ class MTFSMCStrategy(Strategy):
         grade_a_threshold:   float              = 8.0,
         killzone_only:       bool               = True,
         df_daily:            pd.DataFrame | None = None,
+        sweep_zone_tol_pct:  float               = 0.005,
     ) -> None:
         self._df_htf             = df_htf
         self._min_htf_score      = min_htf_score
@@ -94,6 +95,7 @@ class MTFSMCStrategy(Strategy):
         self._grade_a_threshold  = grade_a_threshold
         self._killzone_only      = killzone_only
         self._df_daily           = df_daily
+        self._sweep_zone_tol_pct = sweep_zone_tol_pct
         self._min_htf_bars       = max(swing_length, internal_length) * 2
 
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
@@ -176,6 +178,7 @@ class MTFSMCStrategy(Strategy):
             htf_result, close, htf_bar_idx,
             min_score=3.0,
             timestamp=ltf_ts,
+            sweep_zone_tol_pct=self._sweep_zone_tol_pct,
         )
         if cs is None:
             return Signal(SignalType.NONE, 0.0, "HTF score below threshold", bar_index)
