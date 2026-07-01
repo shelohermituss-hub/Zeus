@@ -107,6 +107,32 @@ class TestMTFSMCStrategyInit:
         s = MTFSMCStrategy(df_htf=_make_htf(), sweep_zone_tol_pct=0.01)
         assert s._sweep_zone_tol_pct == pytest.approx(0.01)
 
+    def test_df_mtf_default_none(self):
+        s = MTFSMCStrategy(df_htf=_make_htf())
+        assert s._df_mtf is None
+
+    def test_df_mtf_stored(self):
+        df_htf = _make_htf()
+        df_mtf = _synthetic_ohlcv(n=200, seed=5, start="2023-01-01", freq="1h")
+        s = MTFSMCStrategy(df_htf=df_htf, df_mtf=df_mtf)
+        assert s._df_mtf is df_mtf
+
+    def test_mss_lookback_default(self):
+        s = MTFSMCStrategy(df_htf=_make_htf())
+        assert s._mss_lookback == 10
+
+    def test_mss_lookback_custom(self):
+        s = MTFSMCStrategy(df_htf=_make_htf(), mss_lookback=20)
+        assert s._mss_lookback == 20
+
+    def test_require_entry_fvg_default_true(self):
+        s = MTFSMCStrategy(df_htf=_make_htf())
+        assert s._require_entry_fvg is True
+
+    def test_require_entry_fvg_can_be_disabled(self):
+        s = MTFSMCStrategy(df_htf=_make_htf(), require_entry_fvg=False)
+        assert s._require_entry_fvg is False
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Kill Zone gate
@@ -217,7 +243,7 @@ class TestDailyBiasGateMTF:
         df_ltf = self._ltf_with_ts()
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf_result(BULLISH)), \
              patch.object(s, "_in_htf_zone", return_value="OB"), \
-             patch.object(s, "_ltf_confirms", return_value=True), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None  # Enough to stop at confluence step
             sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
@@ -231,7 +257,7 @@ class TestDailyBiasGateMTF:
         df_ltf   = self._ltf_with_ts("2024-01-02")
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf_result(BULLISH)), \
              patch.object(s, "_in_htf_zone", return_value="OB"), \
-             patch.object(s, "_ltf_confirms", return_value=True), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
             sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
@@ -264,7 +290,7 @@ class TestDailyBiasGateMTF:
         df_ltf   = self._ltf_with_ts("2024-01-02")
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf_result(BULLISH)), \
              patch.object(s, "_in_htf_zone", return_value="OB"), \
-             patch.object(s, "_ltf_confirms", return_value=True), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
             sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
@@ -341,3 +367,282 @@ class TestGenerateSignalMTFSmoke:
         sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
         assert sig.type == SignalType.NONE
         assert "htf" in sig.reason.lower()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 1H MSS gate
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestMTFMSSGate:
+    """
+    Verify that the 1H MSS gate (step 3.6) works correctly.
+
+    killzone_only=False so we isolate the MSS gate.
+    HTF swing/internal bias controlled via mocks.
+    """
+
+    def _make_mtf_df(self, n: int = 200) -> pd.DataFrame:
+        return _synthetic_ohlcv(n=n, seed=7, start="2023-01-01", freq="1h")
+
+    def _ltf_with_ts(self, n: int = 200) -> pd.DataFrame:
+        # "2023-02-01" gives ~30 days * 6 bars/day = ~180 HTF bars — well above _min_htf_bars=20
+        end = pd.Timestamp("2023-02-01 10:00:00")
+        idx = pd.date_range(end=end, periods=n, freq="5min")
+        rng = np.random.default_rng(42)
+        c   = 2000.0 + np.cumsum(rng.normal(0, 1, n))
+        return pd.DataFrame(
+            {"open": c, "high": c + 1, "low": c - 1, "close": c, "volume": [10.0] * n},
+            index=idx,
+        )
+
+    def _mock_htf(self, direction: int):
+        r = MagicMock()
+        r.swing_bias    = direction
+        r.internal_bias = direction
+        return r
+
+    def test_no_df_mtf_gate_disabled_passes_through(self):
+        """When df_mtf=None the MSS gate is inactive — pipeline continues."""
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), df_mtf=None,
+            killzone_only=False, swing_length=10, internal_length=5,
+        )
+        df_ltf = self._ltf_with_ts()
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_bc.return_value = None
+            sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
+        assert "1h mss" not in sig.reason.lower()
+
+    def test_mss_confirmed_passes_through(self):
+        """When MSS is confirmed the gate does not reject."""
+        df_mtf = self._make_mtf_df()
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), df_mtf=df_mtf,
+            killzone_only=False, swing_length=10, internal_length=5,
+        )
+        df_ltf = self._ltf_with_ts()
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)), \
+             patch.object(s, "_mtf_mss_confirmed", return_value=True), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_bc.return_value = None
+            sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
+        assert "1h mss" not in sig.reason.lower()
+
+    def test_mss_not_confirmed_rejects_signal(self):
+        """When MSS returns False the gate rejects with informative reason."""
+        df_mtf = self._make_mtf_df()
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), df_mtf=df_mtf,
+            killzone_only=False, swing_length=10, internal_length=5,
+        )
+        df_ltf = self._ltf_with_ts()
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)), \
+             patch.object(s, "_mtf_mss_confirmed", return_value=False):
+            sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
+        assert sig.type == SignalType.NONE
+        assert "1h mss" in sig.reason.lower()
+
+    def test_mss_not_confirmed_signal_type_none(self):
+        df_mtf = self._make_mtf_df()
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), df_mtf=df_mtf,
+            killzone_only=False, swing_length=10, internal_length=5,
+        )
+        df_ltf = self._ltf_with_ts()
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BEARISH)), \
+             patch.object(s, "_mtf_mss_confirmed", return_value=False):
+            sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
+        assert sig.type == SignalType.NONE
+        assert sig.confidence == pytest.approx(0.0)
+
+    def test_last_mtf_bar_returns_valid_index(self):
+        df_mtf = self._make_mtf_df(n=100)
+        s = MTFSMCStrategy(df_htf=_make_htf(), df_mtf=df_mtf, killzone_only=False)
+        ts = pd.Timestamp("2023-01-03 10:00:00")
+        idx = s._last_mtf_bar(ts)
+        assert 0 <= idx < len(df_mtf)
+
+    def test_mtf_mss_confirmed_none_df_returns_true(self):
+        s = MTFSMCStrategy(df_htf=_make_htf(), df_mtf=None, killzone_only=False)
+        ts = pd.Timestamp("2023-01-03 10:00:00")
+        assert s._mtf_mss_confirmed(ts, BULLISH) is True
+        assert s._mtf_mss_confirmed(ts, BEARISH) is True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 5M LTF entry trigger (bias + FVG)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestEntryFVGTrigger:
+    """
+    Verify _ltf_entry_confirmed() behaviour:
+    - With require_entry_fvg=False: only LTF bias matters.
+    - With require_entry_fvg=True (default): both bias AND 5M FVG required.
+    """
+
+    def _make_ltf(self, n: int = 50, seed: int = 11) -> pd.DataFrame:
+        return _synthetic_ohlcv(n=n, seed=seed, start="2023-01-03", freq="5min")
+
+    def test_fvg_not_required_bias_match_returns_true(self):
+        """When require_entry_fvg=False, matching LTF bias is sufficient."""
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), killzone_only=False,
+            swing_length=10, internal_length=5, atr_period=30,
+            require_entry_fvg=False,
+        )
+        df = self._make_ltf()
+        bar = len(df) - 1
+        # Run real analysis — we only assert that if internal_bias matches it returns True.
+        # Use mock to force bias match.
+        with patch("zeus.strategy.mtf_strategy.analyze") as mock_analyze:
+            mock_result = MagicMock()
+            mock_result.internal_bias = BULLISH
+            mock_analyze.return_value = mock_result
+            result = s._ltf_entry_confirmed(df, bar, BULLISH, float(df["close"].iloc[bar]))
+        assert result is True
+
+    def test_fvg_not_required_bias_mismatch_returns_false(self):
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), killzone_only=False,
+            swing_length=10, internal_length=5, atr_period=30,
+            require_entry_fvg=False,
+        )
+        df = self._make_ltf()
+        bar = len(df) - 1
+        with patch("zeus.strategy.mtf_strategy.analyze") as mock_analyze:
+            mock_result = MagicMock()
+            mock_result.internal_bias = BEARISH
+            mock_analyze.return_value = mock_result
+            result = s._ltf_entry_confirmed(df, bar, BULLISH, float(df["close"].iloc[bar]))
+        assert result is False
+
+    def test_fvg_required_no_active_fvg_returns_false(self):
+        """When FVG is required but no active FVG exists, entry is rejected."""
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), killzone_only=False,
+            swing_length=10, internal_length=5, atr_period=30,
+            require_entry_fvg=True,
+        )
+        df = self._make_ltf()
+        bar = len(df) - 1
+        with patch("zeus.strategy.mtf_strategy.analyze") as mock_analyze, \
+             patch("zeus.strategy.mtf_strategy.get_active_fvgs", return_value=[]):
+            mock_result = MagicMock()
+            mock_result.internal_bias = BULLISH
+            mock_analyze.return_value = mock_result
+            result = s._ltf_entry_confirmed(df, bar, BULLISH, float(df["close"].iloc[bar]))
+        assert result is False
+
+    def test_fvg_required_price_in_fvg_returns_true(self):
+        """Price inside an active aligned FVG → entry confirmed."""
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), killzone_only=False,
+            swing_length=10, internal_length=5, atr_period=30,
+            require_entry_fvg=True,
+        )
+        df = self._make_ltf()
+        bar = len(df) - 1
+        price = float(df["close"].iloc[bar])
+
+        mock_fvg = MagicMock()
+        mock_fvg.direction = BULLISH
+        mock_fvg.bottom    = price - 2.0
+        mock_fvg.top       = price + 2.0
+
+        with patch("zeus.strategy.mtf_strategy.analyze") as mock_analyze, \
+             patch("zeus.strategy.mtf_strategy.get_active_fvgs", return_value=[mock_fvg]):
+            mock_result = MagicMock()
+            mock_result.internal_bias = BULLISH
+            mock_analyze.return_value = mock_result
+            result = s._ltf_entry_confirmed(df, bar, BULLISH, price)
+        assert result is True
+
+    def test_fvg_required_price_outside_fvg_returns_false(self):
+        """FVG exists but price is outside it → entry rejected."""
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), killzone_only=False,
+            swing_length=10, internal_length=5, atr_period=30,
+            require_entry_fvg=True,
+        )
+        df = self._make_ltf()
+        bar = len(df) - 1
+        price = float(df["close"].iloc[bar])
+
+        mock_fvg = MagicMock()
+        mock_fvg.direction = BULLISH
+        mock_fvg.bottom    = price + 50.0   # far above price
+        mock_fvg.top       = price + 100.0
+
+        with patch("zeus.strategy.mtf_strategy.analyze") as mock_analyze, \
+             patch("zeus.strategy.mtf_strategy.get_active_fvgs", return_value=[mock_fvg]):
+            mock_result = MagicMock()
+            mock_result.internal_bias = BULLISH
+            mock_analyze.return_value = mock_result
+            result = s._ltf_entry_confirmed(df, bar, BULLISH, price)
+        assert result is False
+
+    def test_fvg_wrong_direction_ignored(self):
+        """A bearish FVG doesn't satisfy a bullish entry requirement."""
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), killzone_only=False,
+            swing_length=10, internal_length=5, atr_period=30,
+            require_entry_fvg=True,
+        )
+        df = self._make_ltf()
+        bar = len(df) - 1
+        price = float(df["close"].iloc[bar])
+
+        mock_fvg = MagicMock()
+        mock_fvg.direction = BEARISH     # wrong direction
+        mock_fvg.bottom    = price - 2.0
+        mock_fvg.top       = price + 2.0
+
+        with patch("zeus.strategy.mtf_strategy.analyze") as mock_analyze, \
+             patch("zeus.strategy.mtf_strategy.get_active_fvgs", return_value=[mock_fvg]):
+            mock_result = MagicMock()
+            mock_result.internal_bias = BULLISH
+            mock_analyze.return_value = mock_result
+            result = s._ltf_entry_confirmed(df, bar, BULLISH, price)
+        assert result is False
+
+    def test_insufficient_window_returns_false(self):
+        """Window smaller than internal_length*2+1 immediately returns False."""
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), killzone_only=False,
+            swing_length=10, internal_length=5, atr_period=30,
+            ltf_lookback=3,   # tiny window
+        )
+        df = self._make_ltf(n=5)
+        result = s._ltf_entry_confirmed(df, 2, BULLISH, 2000.0)
+        assert result is False
+
+    def test_generate_signal_uses_ltf_entry_confirmed(self):
+        """generate_signal() reaches _ltf_entry_confirmed (not old _ltf_confirms)."""
+        s = MTFSMCStrategy(
+            df_htf=_make_htf(), killzone_only=False,
+            swing_length=10, internal_length=5,
+        )
+        df_ltf = _synthetic_ohlcv(n=200, seed=30, start="2023-01-02", freq="5min")
+        mock_htf = MagicMock()
+        mock_htf.swing_bias    = BULLISH
+        mock_htf.internal_bias = BULLISH
+        # Patch _last_htf_bar so the pipeline passes the HTF-data guard
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=mock_htf), \
+             patch.object(s, "_in_htf_zone", return_value="FVG"), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc, \
+             patch.object(s, "_ltf_entry_confirmed", return_value=False) as mock_ltf:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df_ltf, bar_index=len(df_ltf) - 1)
+        mock_ltf.assert_called_once()
+        assert sig.type == SignalType.NONE
+        assert "ltf entry" in sig.reason.lower()

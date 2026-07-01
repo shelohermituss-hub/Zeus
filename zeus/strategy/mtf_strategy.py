@@ -1,16 +1,14 @@
 """
-Multi-timeframe SMC strategy — HTF zone identification + LTF entry confirmation.
+Multi-timeframe SMC strategy — 4-TF cascade entry engine.
 
-Workflow
---------
-Higher timeframe (HTF — typically 4H or 1H):
-  - SMC analysis identifies active zones: Order Blocks, Fair Value Gaps, OTE zones.
-  - The HTF swing bias determines trade direction (factor 1 gate).
+Timeframe cascade
+-----------------
+Daily (1D) → 4H (HTF) → 1H (MTF/MSS) → 5M (LTF entry)
 
-Lower timeframe (LTF — typically 1M):
-  - When price enters an HTF zone, the LTF is scanned for an entry trigger.
-  - Confirmation: the LTF internal bias aligns with the HTF direction (BOS/CHoCH).
-  - Entry at the close of the confirming LTF bar.
+1D  : daily bias gate — rejects signals that conflict with the prior day's candle.
+4H  : SMC analysis identifies active zones (OB, FVG, OTE); swing bias sets direction.
+1H  : MSS gate — internal structure must confirm the 4H direction via BOS/CHoCH.
+5M  : entry trigger — LTF internal bias aligns + price inside an active 5M FVG.
 
 Stop-loss placement
 -------------------
@@ -78,6 +76,9 @@ class MTFSMCStrategy(Strategy):
         killzone_only:       bool               = True,
         df_daily:            pd.DataFrame | None = None,
         sweep_zone_tol_pct:  float               = 0.005,
+        df_mtf:              pd.DataFrame | None = None,
+        mss_lookback:        int                 = 10,
+        require_entry_fvg:   bool                = True,
     ) -> None:
         self._df_htf             = df_htf
         self._min_htf_score      = min_htf_score
@@ -96,6 +97,9 @@ class MTFSMCStrategy(Strategy):
         self._killzone_only      = killzone_only
         self._df_daily           = df_daily
         self._sweep_zone_tol_pct = sweep_zone_tol_pct
+        self._df_mtf             = df_mtf
+        self._mss_lookback       = mss_lookback
+        self._require_entry_fvg  = require_entry_fvg
         self._min_htf_bars       = max(swing_length, internal_length) * 2
 
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
@@ -160,6 +164,10 @@ class MTFSMCStrategy(Strategy):
                     bar_index,
                 )
 
+        # ── 3.6. 1H MSS confirmation gate ────────────────────────────────
+        if not self._mtf_mss_confirmed(ltf_ts, direction):
+            return Signal(SignalType.NONE, 0.0, "1H MSS not confirmed", bar_index)
+
         # ── 4. Price inside active HTF zone ──────────────────────────────
         # Use LTF (1M) close price against HTF zones — this is the core of
         # sniper entry: price has retraced into an HTF zone after the HTF bar closed
@@ -196,9 +204,9 @@ class MTFSMCStrategy(Strategy):
                 bar_index,
             )
 
-        # ── 6. LTF internal bias confirmation ────────────────────────────
-        if not self._ltf_confirms(df, bar_index, direction):
-            return Signal(SignalType.NONE, 0.0, "LTF bias not confirmed", bar_index)
+        # ── 6. 5M LTF entry trigger (bias + optional FVG) ────────────────
+        if not self._ltf_entry_confirmed(df, bar_index, direction, close):
+            return Signal(SignalType.NONE, 0.0, "LTF entry not confirmed", bar_index)
 
         # ── 7. SL distance check ─────────────────────────────────────────
         sl_pips, sl_price = self._compute_sl(
@@ -280,18 +288,52 @@ class MTFSMCStrategy(Strategy):
 
         return None
 
-    def _ltf_confirms(
+    def _last_mtf_bar(self, ltf_ts: pd.Timestamp) -> int:
+        """Return the index of the last 1H (MTF) bar whose open <= ltf_ts."""
+        idx = self._df_mtf.index.searchsorted(ltf_ts, side="right") - 1
+        return max(0, int(idx))
+
+    def _mtf_mss_confirmed(self, ltf_ts: pd.Timestamp, direction: int) -> bool:
+        """
+        Return True if the 1H (MTF) internal structure bias confirms *direction*.
+
+        When df_mtf is None the gate is disabled and always returns True.
+        Analyzes the last *mss_lookback* 1H bars for a BOS/CHoCH confirming
+        the 4H direction.
+        """
+        if self._df_mtf is None:
+            return True
+
+        mtf_bar_idx = self._last_mtf_bar(ltf_ts)
+        start = max(0, mtf_bar_idx - self._mss_lookback + 1)
+        window = self._df_mtf.iloc[start : mtf_bar_idx + 1]
+        if len(window) < self._internal_length * 2 + 1:
+            return False
+        try:
+            mtf_result = analyze(
+                window,
+                swing_length=min(self._swing_length, len(window) // 2),
+                internal_length=self._internal_length,
+                atr_period=min(self._atr_period, len(window)),
+            )
+        except Exception:
+            return False
+        return mtf_result.internal_bias == direction
+
+    def _ltf_entry_confirmed(
         self,
         df:        pd.DataFrame,
         bar_index: int,
         direction: int,
+        price:     float,
     ) -> bool:
         """
-        Return True if the LTF internal structure bias at *bar_index* matches
-        *direction*.
+        Return True if the 5M (LTF) entry trigger fires:
+        1. LTF internal bias == direction (BOS/CHoCH on 5M).
+        2. If require_entry_fvg=True, price must also be inside an active 5M FVG
+           aligned with direction.
 
-        Uses a lightweight SMC analysis on the last *ltf_lookback* LTF bars
-        to detect BOS/CHoCH that confirms the HTF direction.
+        Uses the last *ltf_lookback* LTF bars for analysis.
         """
         start = max(0, bar_index - self._ltf_lookback + 1)
         window = df.iloc[start : bar_index + 1]
@@ -306,7 +348,23 @@ class MTFSMCStrategy(Strategy):
             )
         except Exception:
             return False
-        return ltf_result.internal_bias == direction
+
+        if ltf_result.internal_bias != direction:
+            return False
+
+        if not self._require_entry_fvg:
+            return True
+
+        # Price must be inside an active 5M FVG aligned with direction
+        tol = self._zone_tol
+        local_last_bar = len(window) - 1
+        for fvg in get_active_fvgs(ltf_result.fvgs, local_last_bar):
+            if fvg.direction == direction:
+                lo = fvg.bottom * (1 - tol)
+                hi = fvg.top    * (1 + tol)
+                if lo <= price <= hi:
+                    return True
+        return False
 
     def _compute_sl(
         self,
