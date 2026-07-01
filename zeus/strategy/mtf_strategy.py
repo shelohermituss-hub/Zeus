@@ -88,6 +88,7 @@ class MTFSMCStrategy(Strategy):
         require_entry_fvg:   bool                = True,
         require_asian_sweep:      bool = False,
         require_weekly_bias:      bool = False,
+        require_choch_candle:     bool = False,
         max_daily_signals:        int  = 2,
         max_signals_per_session:  int  = 1,
     ) -> None:
@@ -113,6 +114,7 @@ class MTFSMCStrategy(Strategy):
         self._require_entry_fvg   = require_entry_fvg
         self._require_asian_sweep     = require_asian_sweep
         self._require_weekly_bias     = require_weekly_bias
+        self._require_choch_candle    = require_choch_candle
         self._max_daily_signals       = max_daily_signals
         self._max_signals_per_session = max_signals_per_session
         self._min_htf_bars            = max(swing_length, internal_length) * 2
@@ -244,6 +246,23 @@ class MTFSMCStrategy(Strategy):
         # ── 6. 5M LTF entry trigger (bias + optional FVG) ────────────────
         if not self._ltf_entry_confirmed(df, bar_index, direction, close):
             return Signal(SignalType.NONE, 0.0, "LTF entry not confirmed", bar_index)
+
+        # ── 6.5. CHoCH candle confirmation (Rec 11) ──────────────────────
+        # The entry bar itself must close in the trade direction:
+        # long → close > open (bullish engulf); short → close < open (bearish).
+        # Reject doji and counter-direction bars as entry candles.
+        if self._require_choch_candle:
+            bar_open = float(df["open"].iloc[bar_index])
+            if direction == BULLISH and close <= bar_open:
+                return Signal(
+                    SignalType.NONE, 0.0, "entry candle not bullish (CHoCH required)",
+                    bar_index,
+                )
+            if direction == BEARISH and close >= bar_open:
+                return Signal(
+                    SignalType.NONE, 0.0, "entry candle not bearish (CHoCH required)",
+                    bar_index,
+                )
 
         # ── 7. SL distance check ─────────────────────────────────────────
         sl_pips, sl_price = self._compute_sl(

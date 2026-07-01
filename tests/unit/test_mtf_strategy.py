@@ -1171,3 +1171,114 @@ class TestZoneReEntryGuard(TestDailyFrequencyLimit):
             mock_bc.return_value = mock_cs
             sig = s.generate_signal(df, bar_index=len(df) - 1)
         assert "already used today" not in sig.reason.lower()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TestCHoCHCandleGate — Rec 11: entry bar must close in trade direction
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestCHoCHCandleGate:
+    """
+    require_choch_candle=True: the entry bar must close bullish (close > open)
+    for LONG, or bearish (close < open) for SHORT.  Doji bars are rejected.
+    """
+
+    def _make_ltf(self, bar_close: float, bar_open: float,
+                  hour: int = 9, n: int = 200) -> pd.DataFrame:
+        """LTF DataFrame where the LAST bar has explicit open/close."""
+        end = pd.Timestamp(f"2024-01-15 {hour:02d}:00:00")
+        idx = pd.date_range(end=end, periods=n, freq="1min")
+        rng = np.random.default_rng(42)
+        c   = 2000.0 + np.cumsum(rng.normal(0, 0.1, n))
+        opens  = c.copy()
+        closes = c.copy()
+        highs  = c + 2.0
+        lows   = c - 2.0
+        # Override last bar
+        opens[-1]  = bar_open
+        closes[-1] = bar_close
+        highs[-1]  = max(bar_open, bar_close) + 1.0
+        lows[-1]   = min(bar_open, bar_close) - 1.0
+        return pd.DataFrame(
+            {"open": opens, "high": highs, "low": lows,
+             "close": closes, "volume": [10.0] * n},
+            index=idx,
+        )
+
+    def _make_strategy(self, require: bool = True) -> MTFSMCStrategy:
+        return MTFSMCStrategy(
+            df_htf=_make_htf(),
+            killzone_only=False,
+            swing_length=10,
+            internal_length=5,
+            require_choch_candle=require,
+        )
+
+    def _run(self, df: pd.DataFrame, s: MTFSMCStrategy,
+             direction: int = BULLISH) -> "Signal":
+        mock_cs = MagicMock()
+        mock_cs.active_count = 5
+        mock_cs.confidence   = 0.5
+        mock_cs.grade.return_value = MagicMock(value="C")
+        mock_htf = MagicMock()
+        mock_htf.swing_bias    = direction
+        mock_htf.internal_bias = direction
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=mock_htf), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence", return_value=mock_cs):
+            return s.generate_signal(df, bar_index=len(df) - 1)
+
+    # ── LONG (bullish) ────────────────────────────────────────────────────
+
+    def test_bullish_candle_passes_long(self):
+        s = self._make_strategy()
+        df = self._make_ltf(bar_close=2010.0, bar_open=2000.0)  # close > open
+        sig = self._run(df, s, BULLISH)
+        assert "choch" not in sig.reason.lower()
+
+    def test_bearish_candle_rejects_long(self):
+        s = self._make_strategy()
+        df = self._make_ltf(bar_close=1990.0, bar_open=2000.0)  # close < open
+        sig = self._run(df, s, BULLISH)
+        assert sig.type == SignalType.NONE
+        assert "choch" in sig.reason.lower()
+
+    def test_doji_rejects_long(self):
+        s = self._make_strategy()
+        df = self._make_ltf(bar_close=2000.0, bar_open=2000.0)  # close == open
+        sig = self._run(df, s, BULLISH)
+        assert sig.type == SignalType.NONE
+        assert "choch" in sig.reason.lower()
+
+    # ── SHORT (bearish) ───────────────────────────────────────────────────
+
+    def test_bearish_candle_passes_short(self):
+        s = self._make_strategy()
+        df = self._make_ltf(bar_close=1990.0, bar_open=2000.0)  # close < open
+        sig = self._run(df, s, BEARISH)
+        assert "choch" not in sig.reason.lower()
+
+    def test_bullish_candle_rejects_short(self):
+        s = self._make_strategy()
+        df = self._make_ltf(bar_close=2010.0, bar_open=2000.0)  # close > open
+        sig = self._run(df, s, BEARISH)
+        assert sig.type == SignalType.NONE
+        assert "choch" in sig.reason.lower()
+
+    def test_doji_rejects_short(self):
+        s = self._make_strategy()
+        df = self._make_ltf(bar_close=2000.0, bar_open=2000.0)  # close == open
+        sig = self._run(df, s, BEARISH)
+        assert sig.type == SignalType.NONE
+        assert "choch" in sig.reason.lower()
+
+    # ── Gate disabled ─────────────────────────────────────────────────────
+
+    def test_gate_disabled_doji_passes(self):
+        """When require_choch_candle=False, doji bars are not filtered."""
+        s = self._make_strategy(require=False)
+        df = self._make_ltf(bar_close=2000.0, bar_open=2000.0)  # doji
+        sig = self._run(df, s, BULLISH)
+        assert "choch" not in sig.reason.lower()

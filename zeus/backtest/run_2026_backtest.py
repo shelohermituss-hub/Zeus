@@ -137,6 +137,8 @@ def main() -> None:
         sweep_zone_tol_pct=0.005,
         # Weekly bias super-filter (Rec 9) — only trade in weekly trend direction
         require_weekly_bias=True,
+        # CHoCH candle confirmation (Rec 11) — entry bar must close in trade direction
+        require_choch_candle=True,
         # 5M FVG entry trigger (Rec 4)
         require_entry_fvg=True,
         ltf_lookback=20,
