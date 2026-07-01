@@ -97,10 +97,13 @@ class AdvancedBacktestEngine:
             bar_ts    = df.index[bar_index].to_pydatetime()
 
             # ── 1. Process open positions (intrabar exits) ────────────────
-            to_remove: list[str] = []
+            to_remove: set[str] = set()
             for tid, (state, trade) in open_positions.items():
                 events = state.process_bar(bar_high, bar_low, self._partial_cfg)
                 for event_type, price, qty in events:
+                    if tid in to_remove:
+                        # Position already closed by an earlier event this bar
+                        continue
                     fee = price * qty * self._fee_pct
                     if event_type in ("sl", "trail"):
                         # Final exit via SL or trailing stop
@@ -109,7 +112,7 @@ class AdvancedBacktestEngine:
                         trade.realized_pnl = total_pnl
                         trade.status       = TradeStatus.CLOSED_SL if event_type == "sl" else TradeStatus.CLOSED_MAN
                         trade.closed_at    = bar_ts
-                        to_remove.append(tid)
+                        to_remove.add(tid)
                         logger.debug(
                             "Trade closed",
                             trade_id=tid, event=event_type,
@@ -122,7 +125,7 @@ class AdvancedBacktestEngine:
                         trade.realized_pnl = total_pnl
                         trade.status       = TradeStatus.CLOSED_TP
                         trade.closed_at    = bar_ts
-                        to_remove.append(tid)
+                        to_remove.add(tid)
                     # else: intermediate partial → balance update deferred to close
 
             for tid in to_remove:
