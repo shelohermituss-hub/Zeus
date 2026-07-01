@@ -183,6 +183,42 @@ def _build_range(stype: SessionType, state: dict, formed_at: int) -> SessionRang
 # Query helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────────────────────
+# ICT Kill Zones (UTC) — high-probability entry windows for XAUUSD
+# ──────────────────────────────────────────────────────────────────────────────
+
+# London Kill Zone: Asian→London transition, institutional order flow
+LONDON_KZ: tuple[int, int, int, int] = (7, 0, 11, 0)   # 07:00–11:00 UTC
+
+# New York Kill Zone: London/NY overlap, highest XAUUSD liquidity
+NY_KZ: tuple[int, int, int, int] = (12, 0, 15, 0)       # 12:00–15:00 UTC
+
+
+def _ts_minutes_utc(ts: pd.Timestamp) -> int:
+    """Return minutes-since-midnight UTC for *ts*."""
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC")
+    return ts.hour * 60 + ts.minute
+
+
+def is_in_killzone(ts: pd.Timestamp) -> bool:
+    """Return True if *ts* falls within the London or NY kill zone (UTC)."""
+    m = _ts_minutes_utc(ts)
+    in_london = LONDON_KZ[0] * 60 + LONDON_KZ[1] <= m < LONDON_KZ[2] * 60 + LONDON_KZ[3]
+    in_ny     = NY_KZ[0]     * 60 + NY_KZ[1]     <= m < NY_KZ[2]     * 60 + NY_KZ[3]
+    return in_london or in_ny
+
+
+def killzone_name(ts: pd.Timestamp) -> str | None:
+    """Return 'London', 'NY', or None if outside both kill zones."""
+    m = _ts_minutes_utc(ts)
+    if LONDON_KZ[0] * 60 + LONDON_KZ[1] <= m < LONDON_KZ[2] * 60 + LONDON_KZ[3]:
+        return "London"
+    if NY_KZ[0] * 60 + NY_KZ[1] <= m < NY_KZ[2] * 60 + NY_KZ[3]:
+        return "NY"
+    return None
+
+
 def get_session_ranges(
     ranges: list[SessionRange],
     at_bar: int,

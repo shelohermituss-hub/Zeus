@@ -32,6 +32,7 @@ import pandas as pd
 from zeus.strategy.base import Signal, SignalType, Strategy
 from zeus.strategy.confluence import PatternGrade, best_confluence
 from zeus.strategy.smc.indicator import SMCResult, analyze
+from zeus.strategy.smc.session import is_in_killzone, killzone_name
 from zeus.strategy.smc.order_block import get_active_order_blocks
 from zeus.strategy.smc.fvg import get_active_fvgs
 from zeus.strategy.smc.fibonacci import get_latest_fib_zone
@@ -74,6 +75,7 @@ class MTFSMCStrategy(Strategy):
         min_grade:           PatternGrade       = PatternGrade.C,
         grade_b_threshold:   float              = 6.0,
         grade_a_threshold:   float              = 8.0,
+        killzone_only:       bool               = True,
     ) -> None:
         self._df_htf             = df_htf
         self._min_htf_score      = min_htf_score
@@ -89,6 +91,7 @@ class MTFSMCStrategy(Strategy):
         self._min_grade          = min_grade
         self._grade_b_threshold  = grade_b_threshold
         self._grade_a_threshold  = grade_a_threshold
+        self._killzone_only      = killzone_only
         self._min_htf_bars       = max(swing_length, internal_length) * 2
 
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
@@ -116,6 +119,12 @@ class MTFSMCStrategy(Strategy):
         close     = float(df["close"].iloc[bar_index])
         bar_low   = float(df["low"].iloc[bar_index])
         bar_high  = float(df["high"].iloc[bar_index])
+
+        # ── 0. Kill Zone gate (cheapest check — runs before HTF analysis) ─
+        if self._killzone_only:
+            kz = killzone_name(ltf_ts)
+            if kz is None:
+                return Signal(SignalType.NONE, 0.0, "outside killzone", bar_index)
 
         # ── 1. Locate last closed HTF bar ────────────────────────────────
         htf_bar_idx = self._last_htf_bar(ltf_ts)
@@ -152,6 +161,7 @@ class MTFSMCStrategy(Strategy):
         cs = best_confluence(
             htf_result, close, htf_bar_idx,
             min_score=3.0,
+            timestamp=ltf_ts,
         )
         if cs is None:
             return Signal(SignalType.NONE, 0.0, "HTF score below threshold", bar_index)

@@ -13,7 +13,7 @@ Factors and gate roles
 4  Liquidity Sweep         no    sweep confirmed direction within lookback bars
 5  FVG / Imbalance         no    price inside an active fair-value gap
 6  POC                     no    price within tolerance of Point of Control
-7  Session Level           no    price near session H (short) or L (long)
+7  Kill Zone Session       no    bar timestamp within London (07-11h) or NY (12-15h) UTC
 8  Entry Model             YES   internal_bias matches direction (trigger)
 9  Discount / Premium      no    price below POC for long; above POC for short
 10 Fibonacci 50 %          no    price within tolerance of the 50 % midpoint
@@ -27,13 +27,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+import pandas as pd
+
 from zeus.strategy.smc.fibonacci import get_latest_fib_zone
 from zeus.strategy.smc.fvg import get_active_fvgs
 from zeus.strategy.smc.indicator import SMCResult
 from zeus.strategy.smc.liquidity import last_sweep
 from zeus.strategy.smc.order_block import get_active_order_blocks
 from zeus.strategy.smc.pivot import BEARISH, BULLISH
-from zeus.strategy.smc.session import get_session_ranges
+from zeus.strategy.smc.session import get_session_ranges, is_in_killzone, killzone_name
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -162,27 +164,28 @@ class ConfluenceScore:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def score_confluence(
-    result:                SMCResult,
-    price:                 float,
-    bar_index:             int,
-    direction:             int,
-    poc_tolerance_pct:     float = 0.003,
-    session_tolerance_pct: float = 0.003,
-    fib_50_tolerance_pct:  float = 0.003,
-    sweep_lookback:        int   = 10,
+    result:               SMCResult,
+    price:                float,
+    bar_index:            int,
+    direction:            int,
+    timestamp:            pd.Timestamp | None = None,
+    poc_tolerance_pct:    float = 0.003,
+    fib_50_tolerance_pct: float = 0.003,
+    sweep_lookback:       int   = 10,
 ) -> ConfluenceScore:
     """
     Evaluate all 10 confluence factors for one direction at one bar.
 
     Args:
-        result:                Full SMCResult from indicator.analyze().
-        price:                 Current close price (or entry price candidate).
-        bar_index:             Current bar index for historical look-up gating.
-        direction:             BULLISH (+1) or BEARISH (-1).
-        poc_tolerance_pct:     ±% band around POC for factor 6.
-        session_tolerance_pct: ±% band around session H/L for factor 7.
-        fib_50_tolerance_pct:  ±% band around Fib 50 % for factor 10.
-        sweep_lookback:        Max bars since last sweep to count (factor 4).
+        result:               Full SMCResult from indicator.analyze().
+        price:                Current close price (or entry price candidate).
+        bar_index:            Current bar index for historical look-up gating.
+        direction:            BULLISH (+1) or BEARISH (-1).
+        timestamp:            UTC timestamp of the current bar — used by F7
+                              (Kill Zone Session). When None, F7 is inactive.
+        poc_tolerance_pct:    ±% band around POC for factor 6.
+        fib_50_tolerance_pct: ±% band around Fib 50 % for factor 10.
+        sweep_lookback:       Max bars since last sweep to count (factor 4).
 
     Returns:
         ConfluenceScore with 10 FactorResult entries.
@@ -194,7 +197,7 @@ def score_confluence(
         _f4_liquidity_sweep(result, bar_index, direction, sweep_lookback),
         _f5_fvg(result, price, bar_index, direction),
         _f6_poc(result, price, poc_tolerance_pct),
-        _f7_session_level(result, price, bar_index, direction, session_tolerance_pct),
+        _f7_killzone(timestamp),
         _f8_entry_model(result, direction),
         _f9_discount_premium(result, price, direction),
         _f10_fib_50(result, price, bar_index, direction, fib_50_tolerance_pct),
@@ -212,6 +215,7 @@ def best_confluence(
     price:     float,
     bar_index: int,
     min_score: float = 4.0,
+    timestamp: pd.Timestamp | None = None,
     **kwargs,
 ) -> ConfluenceScore | None:
     """
@@ -219,9 +223,12 @@ def best_confluence(
 
     Returns None when neither direction meets min_score + gate requirements.
     On a score tie the BULLISH direction wins (conservative default).
+
+    Args:
+        timestamp: UTC timestamp of the current bar forwarded to F7 (Kill Zone).
     """
-    bull = score_confluence(result, price, bar_index, BULLISH, **kwargs)
-    bear = score_confluence(result, price, bar_index, BEARISH, **kwargs)
+    bull = score_confluence(result, price, bar_index, BULLISH, timestamp=timestamp, **kwargs)
+    bear = score_confluence(result, price, bar_index, BEARISH, timestamp=timestamp, **kwargs)
 
     candidates = [s for s in (bull, bear) if s.is_tradeable(min_score)]
     if not candidates:
@@ -323,28 +330,25 @@ def _f6_poc(
     )
 
 
-def _f7_session_level(
-    result: SMCResult, price: float, bar_index: int,
-    direction: int, tolerance_pct: float,
-) -> FactorResult:
+def _f7_killzone(timestamp: pd.Timestamp | None) -> FactorResult:
     """
-    Factor 7 — price is near a session boundary aligned with the trade direction.
+    Factor 7 — current bar falls within a high-probability kill zone.
 
-    BULLISH: near a session LOW  (potential SSL liquidity target).
-    BEARISH: near a session HIGH (potential BSL liquidity target).
+    London Kill Zone : 07:00–11:00 UTC  (Asian→London transition)
+    NY Kill Zone     : 12:00–15:00 UTC  (London/NY overlap)
+
+    Trading exclusively within these windows avoids low-liquidity Asian
+    sessions where false signals are most frequent for XAUUSD.
+    When no timestamp is provided the factor is inactive (safe default).
     """
-    for sr in reversed(get_session_ranges(result.session_ranges, bar_index)):
-        if direction == BULLISH and sr.is_near_low(price, tolerance_pct):
-            return FactorResult(
-                7, "Session Level", True,
-                f"near {sr.session.name} low={sr.low:.2f}",
-            )
-        if direction == BEARISH and sr.is_near_high(price, tolerance_pct):
-            return FactorResult(
-                7, "Session Level", True,
-                f"near {sr.session.name} high={sr.high:.2f}",
-            )
-    return FactorResult(7, "Session Level", False, "no session level at price")
+    if timestamp is None:
+        return FactorResult(7, "Kill Zone Session", False, "no timestamp")
+    kz = killzone_name(timestamp)
+    active = kz is not None
+    return FactorResult(
+        7, "Kill Zone Session", active,
+        f"killzone={kz or 'outside'} ({timestamp.strftime('%H:%M')} UTC)",
+    )
 
 
 def _f8_entry_model(result: SMCResult, direction: int) -> FactorResult:

@@ -41,44 +41,41 @@ class SMCStrategy(Strategy):
     Both gate factors must fire for a signal regardless of total score.
 
     Args:
-        swing_length:          Lookback for swing pivot detection (Pine default 50).
-        internal_length:       Lookback for internal structure pivots (Pine default 5).
-        atr_period:            ATR period for order-block volatility filter.
-        ob_mitigation:         OB mitigation mode: "highlow" or "close".
-        vol_num_bins:          Price grid resolution for the volume profile.
-        vol_value_area_pct:    Fraction of volume the value area must cover (0.70 = 70%).
-        min_score:             Minimum active factors required (both gates + score).
-        poc_tolerance_pct:     ±% band around POC for factor 6.
-        session_tolerance_pct: ±% band around session H/L for factor 7.
-        fib_50_tolerance_pct:  ±% band around Fibonacci 50% for factor 10.
-        sweep_lookback:        Max bars since last liquidity sweep for factor 4.
+        swing_length:        Lookback for swing pivot detection (Pine default 50).
+        internal_length:     Lookback for internal structure pivots (Pine default 5).
+        atr_period:          ATR period for order-block volatility filter.
+        ob_mitigation:       OB mitigation mode: "highlow" or "close".
+        vol_num_bins:        Price grid resolution for the volume profile.
+        vol_value_area_pct:  Fraction of volume the value area must cover (0.70 = 70%).
+        min_score:           Minimum active factors required (both gates + score).
+        poc_tolerance_pct:   ±% band around POC for factor 6.
+        fib_50_tolerance_pct: ±% band around Fibonacci 50% for factor 10.
+        sweep_lookback:      Max bars since last liquidity sweep for factor 4.
     """
 
     def __init__(
         self,
-        swing_length:          int   = 50,
-        internal_length:       int   = 5,
-        atr_period:            int   = 200,
-        ob_mitigation:         str   = "highlow",
-        vol_num_bins:          int   = 100,
-        vol_value_area_pct:    float = 0.70,
-        min_score:             float = 4.0,
-        poc_tolerance_pct:     float = 0.003,
-        session_tolerance_pct: float = 0.003,
-        fib_50_tolerance_pct:  float = 0.003,
-        sweep_lookback:        int   = 10,
+        swing_length:        int   = 50,
+        internal_length:     int   = 5,
+        atr_period:          int   = 200,
+        ob_mitigation:       str   = "highlow",
+        vol_num_bins:        int   = 100,
+        vol_value_area_pct:  float = 0.70,
+        min_score:           float = 4.0,
+        poc_tolerance_pct:   float = 0.003,
+        fib_50_tolerance_pct: float = 0.003,
+        sweep_lookback:      int   = 10,
     ) -> None:
-        self.swing_length          = swing_length
-        self.internal_length       = internal_length
-        self.atr_period            = atr_period
-        self.ob_mitigation         = ob_mitigation
-        self.vol_num_bins          = vol_num_bins
-        self.vol_value_area_pct    = vol_value_area_pct
-        self.min_score             = min_score
-        self.poc_tolerance_pct     = poc_tolerance_pct
-        self.session_tolerance_pct = session_tolerance_pct
-        self.fib_50_tolerance_pct  = fib_50_tolerance_pct
-        self.sweep_lookback        = sweep_lookback
+        self.swing_length        = swing_length
+        self.internal_length     = internal_length
+        self.atr_period          = atr_period
+        self.ob_mitigation       = ob_mitigation
+        self.vol_num_bins        = vol_num_bins
+        self.vol_value_area_pct  = vol_value_area_pct
+        self.min_score           = min_score
+        self.poc_tolerance_pct   = poc_tolerance_pct
+        self.fib_50_tolerance_pct = fib_50_tolerance_pct
+        self.sweep_lookback      = sweep_lookback
 
         self._min_bars = max(swing_length, internal_length) * 2
 
@@ -106,11 +103,14 @@ class SMCStrategy(Strategy):
         )
 
         price = float(df["close"].iloc[bar_index])
+        timestamp: pd.Timestamp | None = (
+            df.index[bar_index] if isinstance(df.index, pd.DatetimeIndex) else None
+        )
         cs = best_confluence(
             result, price, bar_index,
             min_score=self.min_score,
+            timestamp=timestamp,
             poc_tolerance_pct=self.poc_tolerance_pct,
-            session_tolerance_pct=self.session_tolerance_pct,
             fib_50_tolerance_pct=self.fib_50_tolerance_pct,
             sweep_lookback=self.sweep_lookback,
         )
