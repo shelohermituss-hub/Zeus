@@ -100,6 +100,7 @@ class ScalpSMCStrategy(MTFSMCStrategy):
         max_daily_signals:            int   = 5,
         max_signals_per_session: int   = 2,
         allowed_zones:           list[str] | None = None,
+        mss_lookback:            int   = 20,
     ) -> None:
         super().__init__(
             df_htf=df_htf_1h,
@@ -113,6 +114,7 @@ class ScalpSMCStrategy(MTFSMCStrategy):
             internal_length=internal_length,
             atr_period=atr_period,
             ltf_lookback=ltf_lookback,
+            mss_lookback=mss_lookback,
             zone_tolerance_pct=0.003,
             killzone_only=killzone_only,
             sweep_zone_tol_pct=0.005,

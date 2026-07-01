@@ -103,17 +103,21 @@ def build_timeframes(df_m1: pd.DataFrame) -> dict[str, pd.DataFrame]:
     Returns
     -------
     dict with keys:
-        ``"m1"``   — raw M1          (ScalpSMCStrategy LTF entry bars)
-        ``"5min"`` — 5-minute        (MTFSMCStrategy LTF entry bars)
-        ``"15min"``— 15-minute       (ScalpSMCStrategy MSS gate)
-        ``"1h"``   — 1-hour          (MTFSMCStrategy MSS gate / ScalpSMCStrategy HTF)
-        ``"4h"``   — 4-hour          (MTFSMCStrategy HTF SMC analysis)
-        ``"1d"``   — daily           (daily bias gate, both strategies)
+        ``"m1"``    — raw M1           (LTF entry bars, tightest SL)
+        ``"3min"``  — 3-minute         (ultra-scalp entry)
+        ``"5min"``  — 5-minute         (scalp entry / refinement)
+        ``"15min"`` — 15-minute        (refinement / MSS gate)
+        ``"30min"`` — 30-minute        (intraday HTF / MSS gate)
+        ``"1h"``    — 1-hour           (HTF zone analysis)
+        ``"4h"``    — 4-hour           (swing HTF analysis)
+        ``"1d"``    — daily            (daily bias gate)
     """
     return {
         "m1":    df_m1,
+        "3min":  resample_ohlcv(df_m1, "3min"),
         "5min":  resample_ohlcv(df_m1, "5min"),
         "15min": resample_ohlcv(df_m1, "15min"),
+        "30min": resample_ohlcv(df_m1, "30min"),
         "1h":    resample_ohlcv(df_m1, "1h"),
         "4h":    resample_ohlcv(df_m1, "4h"),
         "1d":    resample_ohlcv(df_m1, "1D"),

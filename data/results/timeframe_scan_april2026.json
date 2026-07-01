@@ -1,0 +1,244 @@
+{
+  "meta": {
+    "period": "april2026",
+    "start": "2026-04-01",
+    "end": "2026-04-30",
+    "goal": "cascade HTF/MTF/Entry optimale pour scalp intraday"
+  },
+  "variants": [
+    {
+      "id": "TF1",
+      "name": "1H | 15M | 1M  (baseline)",
+      "config": {
+        "id": "TF1",
+        "name": "1H | 15M | 1M  (baseline)",
+        "htf": "1h",
+        "mtf": "15min",
+        "entry": "m1",
+        "swing": 20,
+        "atr": 100,
+        "mss_lb": 20
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10631.86,
+        "net_pnl": 624.71,
+        "total_return_pct": 6.32,
+        "n_trades": 3,
+        "win_rate": 66.7,
+        "avg_win": 320.71,
+        "avg_loss": -2.38,
+        "profit_factor": 269.1837,
+        "max_drawdown_pct": 1.82,
+        "sharpe_ratio": 0.0099,
+        "total_fees": 14.33
+      },
+      "monthly_pnl": {
+        "2026-04": 639.0438292514096
+      },
+      "monthly_n": {
+        "2026-04": 3
+      }
+    },
+    {
+      "id": "TF2",
+      "name": "1H | 5M  | 1M",
+      "config": {
+        "id": "TF2",
+        "name": "1H | 5M  | 1M",
+        "htf": "1h",
+        "mtf": "5min",
+        "entry": "m1",
+        "swing": 20,
+        "atr": 100,
+        "mss_lb": 20
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10543.06,
+        "net_pnl": 535.63,
+        "total_return_pct": 5.43,
+        "n_trades": 3,
+        "win_rate": 66.7,
+        "avg_win": 276.11,
+        "avg_loss": -2.38,
+        "profit_factor": 231.751,
+        "max_drawdown_pct": 2.56,
+        "sharpe_ratio": 0.0078,
+        "total_fees": 14.22
+      },
+      "monthly_pnl": {
+        "2026-04": 549.8469873939582
+      },
+      "monthly_n": {
+        "2026-04": 3
+      }
+    },
+    {
+      "id": "TF3",
+      "name": "30M | 15M | 1M",
+      "config": {
+        "id": "TF3",
+        "name": "30M | 15M | 1M",
+        "htf": "30min",
+        "mtf": "15min",
+        "entry": "m1",
+        "swing": 20,
+        "atr": 100,
+        "mss_lb": 20
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10251.78,
+        "net_pnl": 246.78,
+        "total_return_pct": 2.52,
+        "n_trades": 2,
+        "win_rate": 50.0,
+        "avg_win": 358.5,
+        "avg_loss": -102.36,
+        "profit_factor": 3.5022,
+        "max_drawdown_pct": 1.65,
+        "sharpe_ratio": 0.0061,
+        "total_fees": 9.36
+      },
+      "monthly_pnl": {
+        "2026-04": 256.138189827321
+      },
+      "monthly_n": {
+        "2026-04": 2
+      }
+    },
+    {
+      "id": "TF4",
+      "name": "30M | 5M  | 1M",
+      "config": {
+        "id": "TF4",
+        "name": "30M | 5M  | 1M",
+        "htf": "30min",
+        "mtf": "5min",
+        "entry": "m1",
+        "swing": 20,
+        "atr": 100,
+        "mss_lb": 20
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10249.84,
+        "net_pnl": 242.52,
+        "total_return_pct": 2.5,
+        "n_trades": 3,
+        "win_rate": 33.3,
+        "avg_win": 361.13,
+        "avg_loss": -52.32,
+        "profit_factor": 3.4513,
+        "max_drawdown_pct": 3.09,
+        "sharpe_ratio": 0.0051,
+        "total_fees": 13.97
+      },
+      "monthly_pnl": {
+        "2026-04": 256.4919929416672
+      },
+      "monthly_n": {
+        "2026-04": 3
+      }
+    },
+    {
+      "id": "TF5",
+      "name": "15M | 5M  | 1M",
+      "config": {
+        "id": "TF5",
+        "name": "15M | 5M  | 1M",
+        "htf": "15min",
+        "mtf": "5min",
+        "entry": "m1",
+        "swing": 30,
+        "atr": 200,
+        "mss_lb": 20
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9995.25,
+        "net_pnl": -7.12,
+        "total_return_pct": -0.05,
+        "n_trades": 1,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -2.37,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 1.25,
+        "sharpe_ratio": -0.0001,
+        "total_fees": 4.75
+      },
+      "monthly_pnl": {
+        "2026-04": -2.3747674515
+      },
+      "monthly_n": {
+        "2026-04": 1
+      }
+    },
+    {
+      "id": "TF6",
+      "name": "15M | 3M  | 1M",
+      "config": {
+        "id": "TF6",
+        "name": "15M | 3M  | 1M",
+        "htf": "15min",
+        "mtf": "3min",
+        "entry": "m1",
+        "swing": 30,
+        "atr": 200,
+        "mss_lb": 30
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9890.51,
+        "net_pnl": -114.24,
+        "total_return_pct": -1.09,
+        "n_trades": 2,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -52.37,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 1.61,
+        "sharpe_ratio": -0.0036,
+        "total_fees": 9.49
+      },
+      "monthly_pnl": {
+        "2026-04": -104.74210405612608
+      },
+      "monthly_n": {
+        "2026-04": 2
+      }
+    },
+    {
+      "id": "TF7",
+      "name": "4H  | 15M | 1M",
+      "config": {
+        "id": "TF7",
+        "name": "4H  | 15M | 1M",
+        "htf": "4h",
+        "mtf": "15min",
+        "entry": "m1",
+        "swing": 10,
+        "atr": 50,
+        "mss_lb": 20
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10000.0,
+        "net_pnl": 0.0,
+        "total_return_pct": 0.0,
+        "n_trades": 0,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 0.0,
+        "sharpe_ratio": 0.0,
+        "total_fees": 0.0
+      },
+      "monthly_pnl": {},
+      "monthly_n": {}
+    }
+  ]
+}
