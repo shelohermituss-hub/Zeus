@@ -120,8 +120,8 @@ class MTFSMCStrategy(Strategy):
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
         self._htf_cache: dict[int, SMCResult] = {}
 
-        # Signal frequency log: list of (date, session_name | None) for each emitted signal
-        self._signal_log: list[tuple[datetime.date, str | None]] = []
+        # Signal log: (date, session, htf_bar_idx, zone_type) for each emitted signal
+        self._signal_log: list[tuple[datetime.date, str | None, int, str]] = []
 
     # ------------------------------------------------------------------ #
     # Strategy interface                                                   #
@@ -261,7 +261,7 @@ class MTFSMCStrategy(Strategy):
         session = killzone_name(ltf_ts)   # "London", "NY", or None
 
         if self._max_daily_signals > 0:
-            signals_today = sum(1 for d, _ in self._signal_log if d == today)
+            signals_today = sum(1 for d, *_ in self._signal_log if d == today)
             if signals_today >= self._max_daily_signals:
                 return Signal(
                     SignalType.NONE, 0.0,
@@ -271,7 +271,7 @@ class MTFSMCStrategy(Strategy):
 
         if self._max_signals_per_session > 0 and session is not None:
             signals_session = sum(
-                1 for d, s in self._signal_log if d == today and s == session
+                1 for d, s, *_ in self._signal_log if d == today and s == session
             )
             if signals_session >= self._max_signals_per_session:
                 return Signal(
@@ -280,8 +280,19 @@ class MTFSMCStrategy(Strategy):
                     bar_index,
                 )
 
+        # ── 7.6. Zone re-entry guard (Rec 10) ────────────────────────────
+        # Once a zone (HTF bar + type) generates a signal today, block further
+        # entries from the same zone on the same calendar day.
+        if any(d == today and h == htf_bar_idx and z == zone_type
+               for d, _sess, h, z in self._signal_log):
+            return Signal(
+                SignalType.NONE, 0.0,
+                f"zone {zone_type} at HTF bar {htf_bar_idx} already used today",
+                bar_index,
+            )
+
         # ── 8. Emit signal ────────────────────────────────────────────────
-        self._signal_log.append((today, session))
+        self._signal_log.append((today, session, htf_bar_idx, zone_type))
         stype  = SignalType.LONG if direction == BULLISH else SignalType.SHORT
         reason = (
             f"MTF grade={grade.value} score={cs.active_count}/10 "

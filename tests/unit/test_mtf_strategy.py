@@ -919,7 +919,7 @@ class TestDailyFrequencyLimit:
         """max_signals_per_session=1: second London signal on same day → rejected."""
         s = self._make_strategy(max_daily=5, max_per_session=1)
         import datetime
-        s._signal_log.append((datetime.date(2024, 1, 15), "London"))
+        s._signal_log.append((datetime.date(2024, 1, 15), "London", 99, "FVG"))
         df = self._ltf_at(date="2024-01-15", hour=9)   # London KZ
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
@@ -940,7 +940,7 @@ class TestDailyFrequencyLimit:
         """After one London signal, an NY signal is allowed (different session)."""
         s = self._make_strategy(max_daily=5, max_per_session=1)
         import datetime
-        s._signal_log.append((datetime.date(2024, 1, 15), "London"))
+        s._signal_log.append((datetime.date(2024, 1, 15), "London", 99, "FVG"))
         df = self._ltf_at(date="2024-01-15", hour=13)   # NY KZ (12-15 UTC)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
@@ -962,8 +962,8 @@ class TestDailyFrequencyLimit:
         s = self._make_strategy(max_daily=2, max_per_session=5)
         import datetime
         today = datetime.date(2024, 1, 15)
-        s._signal_log.append((today, "London"))
-        s._signal_log.append((today, "NY"))
+        s._signal_log.append((today, "London", 98, "OB"))
+        s._signal_log.append((today, "NY", 99, "FVG"))
         df = self._ltf_at(date="2024-01-15", hour=13)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
@@ -985,8 +985,8 @@ class TestDailyFrequencyLimit:
         s = self._make_strategy(max_daily=2, max_per_session=5)
         import datetime
         yesterday = datetime.date(2024, 1, 14)
-        s._signal_log.append((yesterday, "London"))
-        s._signal_log.append((yesterday, "NY"))
+        s._signal_log.append((yesterday, "London", 98, "OB"))
+        s._signal_log.append((yesterday, "NY", 99, "FVG"))
         df = self._ltf_at(date="2024-01-15", hour=9)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
@@ -1008,7 +1008,7 @@ class TestDailyFrequencyLimit:
         import datetime
         today = datetime.date(2024, 1, 15)
         # Pre-fill 10 signals today — daily limit disabled, should not block
-        s._signal_log.extend([(today, "London")] * 10)
+        s._signal_log.extend([(today, "London", i, "OB") for i in range(10)])
         df = self._ltf_at(date="2024-01-15", hour=13)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
@@ -1049,8 +1049,8 @@ class TestDailyFrequencyLimit:
     def test_reset_clears_log(self):
         s = self._make_strategy()
         import datetime
-        s._signal_log.append((datetime.date(2024, 1, 15), "London"))
-        s._signal_log.append((datetime.date(2024, 1, 15), "NY"))
+        s._signal_log.append((datetime.date(2024, 1, 15), "London", 100, "OB"))
+        s._signal_log.append((datetime.date(2024, 1, 15), "NY", 101, "FVG"))
         s.reset_signal_log()
         assert s._signal_log == []
 
@@ -1059,7 +1059,7 @@ class TestDailyFrequencyLimit:
         s = self._make_strategy(max_daily=2, max_per_session=5)
         import datetime
         today = datetime.date(2024, 1, 15)
-        s._signal_log.extend([(today, "London"), (today, "NY")])
+        s._signal_log.extend([(today, "London", 98, "OB"), (today, "NY", 99, "FVG")])
         s.reset_signal_log()
         df = self._ltf_at(date="2024-01-15", hour=9)
         with patch.object(s, "_last_htf_bar", return_value=150), \
@@ -1074,3 +1074,100 @@ class TestDailyFrequencyLimit:
             mock_bc.return_value = mock_cs
             sig = s.generate_signal(df, bar_index=len(df) - 1)
         assert "daily signal limit" not in sig.reason.lower()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TestZoneReEntryGuard — Rec 10: zone invalidation after first use per day
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestZoneReEntryGuard(TestDailyFrequencyLimit):
+    """
+    The zone re-entry guard blocks a second signal from the same (htf_bar_idx,
+    zone_type) combination on the same calendar day.  It runs after the frequency
+    gates, so the first signal must be emitted before the guard fires.
+    """
+
+    def test_same_zone_same_day_rejected(self):
+        """Re-entering the same OB on the same HTF bar on the same day is blocked."""
+        s = self._make_strategy(max_daily=5, max_per_session=5)
+        import datetime
+        today = datetime.date(2024, 1, 15)
+        s._signal_log.append((today, "London", 150, "OB"))  # first entry already logged
+
+        df = self._ltf_at(date="2024-01-15", hour=13)       # NY KZ
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert sig.type == SignalType.NONE
+        assert "already used today" in sig.reason.lower()
+
+    def test_different_zone_type_same_bar_allowed(self):
+        """An FVG on the same HTF bar is a distinct zone — not blocked."""
+        s = self._make_strategy(max_daily=5, max_per_session=5)
+        import datetime
+        today = datetime.date(2024, 1, 15)
+        s._signal_log.append((today, "London", 150, "OB"))  # OB used
+
+        df = self._ltf_at(date="2024-01-15", hour=13)       # NY KZ
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="FVG"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert "already used today" not in sig.reason.lower()
+
+    def test_same_zone_different_htf_bar_allowed(self):
+        """Same zone type but different HTF bar index is a different zone — allowed."""
+        s = self._make_strategy(max_daily=5, max_per_session=5)
+        import datetime
+        today = datetime.date(2024, 1, 15)
+        s._signal_log.append((today, "London", 150, "OB"))
+
+        df = self._ltf_at(date="2024-01-15", hour=13)
+        with patch.object(s, "_last_htf_bar", return_value=155), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert "already used today" not in sig.reason.lower()
+
+    def test_same_zone_different_day_allowed(self):
+        """The same zone on the next calendar day is allowed."""
+        s = self._make_strategy(max_daily=5, max_per_session=5)
+        import datetime
+        yesterday = datetime.date(2024, 1, 14)
+        s._signal_log.append((yesterday, "London", 150, "OB"))
+
+        df = self._ltf_at(date="2024-01-15", hour=13)
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert "already used today" not in sig.reason.lower()
