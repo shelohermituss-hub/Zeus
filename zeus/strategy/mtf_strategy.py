@@ -245,11 +245,9 @@ class MTFSMCStrategy(Strategy):
                     )
 
         # ── 5. Full confluence score (LTF price evaluated against HTF zones) ─
-        # Gates (1 and 8) already validated above; score only needs 2 more
-        # active factors (zone itself counts as one → min_score=3).
         cs = best_confluence(
             htf_result, close, htf_bar_idx,
-            min_score=3.0,
+            min_score=self._min_htf_score,
             timestamp=ltf_ts,
             sweep_zone_tol_pct=self._sweep_zone_tol_pct,
         )
@@ -258,7 +256,7 @@ class MTFSMCStrategy(Strategy):
 
         # Grade filter — applied with configurable A/B thresholds
         grade = cs.grade(
-            min_score=3.0,
+            min_score=self._min_htf_score,
             b_threshold=self._grade_b_threshold,
             a_threshold=self._grade_a_threshold,
         )
