@@ -1,0 +1,107 @@
+{
+  "meta": {
+    "symbol": "XAUUSD",
+    "start": "2026-01-01",
+    "end": "2026-06-30",
+    "base_config": "V2A (OB+OTE, score\u22653, clean approach ON)",
+    "filter_tested": "require_ltf_sweep"
+  },
+  "variants": [
+    {
+      "id": "V2A",
+      "name": "Baseline (no LTF sweep)",
+      "config": {
+        "id": "V2A",
+        "name": "Baseline (no LTF sweep)",
+        "ltf_sweep": false,
+        "ltf_lookback": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11408.88,
+        "net_pnl": 1408.88,
+        "total_return_pct": 14.09,
+        "n_trades": 39,
+        "win_rate": 38.5,
+        "avg_win": 232.84,
+        "avg_loss": -104.19,
+        "profit_factor": 1.6761,
+        "max_drawdown_pct": 6.32,
+        "sharpe_ratio": 0.0032,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2A_L1",
+      "name": "LTF sweep lookback=1",
+      "config": {
+        "id": "V2A_L1",
+        "name": "LTF sweep lookback=1",
+        "ltf_sweep": true,
+        "ltf_lookback": 1
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10317.89,
+        "net_pnl": 317.89,
+        "total_return_pct": 3.18,
+        "n_trades": 28,
+        "win_rate": 32.1,
+        "avg_win": 229.5,
+        "avg_loss": -97.09,
+        "profit_factor": 1.1819,
+        "max_drawdown_pct": 11.02,
+        "sharpe_ratio": 0.001,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2A_L3",
+      "name": "LTF sweep lookback=3",
+      "config": {
+        "id": "V2A_L3",
+        "name": "LTF sweep lookback=3",
+        "ltf_sweep": true,
+        "ltf_lookback": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11528.43,
+        "net_pnl": 1528.43,
+        "total_return_pct": 15.28,
+        "n_trades": 32,
+        "win_rate": 40.6,
+        "avg_win": 243.21,
+        "avg_loss": -102.09,
+        "profit_factor": 1.9358,
+        "max_drawdown_pct": 7.29,
+        "sharpe_ratio": 0.0037,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V2A_L5",
+      "name": "LTF sweep lookback=5",
+      "config": {
+        "id": "V2A_L5",
+        "name": "LTF sweep lookback=5",
+        "ltf_sweep": true,
+        "ltf_lookback": 5
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11649.28,
+        "net_pnl": 1649.28,
+        "total_return_pct": 16.49,
+        "n_trades": 36,
+        "win_rate": 38.9,
+        "avg_win": 250.71,
+        "avg_loss": -103.37,
+        "profit_factor": 1.8864,
+        "max_drawdown_pct": 8.2,
+        "sharpe_ratio": 0.0037,
+        "total_fees": 0.0
+      }
+    }
+  ]
+}
