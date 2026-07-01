@@ -22,6 +22,8 @@ from enum import IntEnum
 
 import pandas as pd
 
+from zeus.strategy.smc.pivot import BEARISH, BULLISH
+
 
 class SessionType(IntEnum):
     ASIAN  = 0
@@ -245,3 +247,41 @@ def last_session_range(
     """
     candidates = get_session_ranges(ranges, at_bar, session)
     return candidates[-1] if candidates else None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Daily bias (Recommendation 2 — 1D alignment gate)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_daily_bias(df_daily: pd.DataFrame, ltf_ts: pd.Timestamp) -> int:
+    """
+    Return the directional bias of the last fully closed daily candle.
+
+    Looks up the last daily bar whose open timestamp falls strictly before the
+    calendar-day boundary of *ltf_ts*, ensuring only completed candles are used.
+
+    Args:
+        df_daily: Daily OHLCV DataFrame with a DatetimeIndex.
+        ltf_ts:   Timestamp of the current (lower-timeframe) bar.
+                  Must share the same timezone as df_daily.index.
+
+    Returns:
+        BULLISH (+1) if close > open,
+        BEARISH (-1) if close < open,
+        0           if close == open or no prior daily bar exists.
+    """
+    try:
+        day_boundary = ltf_ts.normalize()
+        idx = df_daily.index.searchsorted(day_boundary, side="left") - 1
+    except TypeError:
+        return 0
+    if idx < 0:
+        return 0
+    row   = df_daily.iloc[idx]
+    close = float(row["close"])
+    open_ = float(row["open"])
+    if close > open_:
+        return BULLISH
+    if close < open_:
+        return BEARISH
+    return 0

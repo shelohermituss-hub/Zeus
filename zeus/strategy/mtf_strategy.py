@@ -32,7 +32,7 @@ import pandas as pd
 from zeus.strategy.base import Signal, SignalType, Strategy
 from zeus.strategy.confluence import PatternGrade, best_confluence
 from zeus.strategy.smc.indicator import SMCResult, analyze
-from zeus.strategy.smc.session import is_in_killzone, killzone_name
+from zeus.strategy.smc.session import get_daily_bias, is_in_killzone, killzone_name
 from zeus.strategy.smc.order_block import get_active_order_blocks
 from zeus.strategy.smc.fvg import get_active_fvgs
 from zeus.strategy.smc.fibonacci import get_latest_fib_zone
@@ -76,6 +76,7 @@ class MTFSMCStrategy(Strategy):
         grade_b_threshold:   float              = 6.0,
         grade_a_threshold:   float              = 8.0,
         killzone_only:       bool               = True,
+        df_daily:            pd.DataFrame | None = None,
     ) -> None:
         self._df_htf             = df_htf
         self._min_htf_score      = min_htf_score
@@ -92,6 +93,7 @@ class MTFSMCStrategy(Strategy):
         self._grade_b_threshold  = grade_b_threshold
         self._grade_a_threshold  = grade_a_threshold
         self._killzone_only      = killzone_only
+        self._df_daily           = df_daily
         self._min_htf_bars       = max(swing_length, internal_length) * 2
 
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
@@ -143,6 +145,18 @@ class MTFSMCStrategy(Strategy):
         # Gate 8: internal bias must confirm swing direction
         if htf_result.internal_bias != direction:
             return Signal(SignalType.NONE, 0.0, "HTF internal bias mismatch", bar_index)
+
+        # ── 3.5. Daily bias alignment gate ───────────────────────────────
+        if self._df_daily is not None:
+            db = get_daily_bias(self._df_daily, ltf_ts)
+            if db != 0 and db != direction:
+                db_name  = "bullish" if db == BULLISH else "bearish"
+                dir_name = "bullish" if direction == BULLISH else "bearish"
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    f"daily bias {db_name} conflicts with HTF {dir_name}",
+                    bar_index,
+                )
 
         # ── 4. Price inside active HTF zone ──────────────────────────────
         # Use LTF (1M) close price against HTF zones — this is the core of

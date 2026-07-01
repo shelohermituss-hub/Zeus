@@ -27,6 +27,7 @@ from zeus.strategy.base import Signal, SignalType, Strategy
 from zeus.strategy.confluence import ConfluenceScore, best_confluence
 from zeus.strategy.smc.indicator import SMCResult, analyze
 from zeus.strategy.smc.pivot import BULLISH
+from zeus.strategy.smc.session import get_daily_bias
 
 
 class SMCStrategy(Strategy):
@@ -51,6 +52,9 @@ class SMCStrategy(Strategy):
         poc_tolerance_pct:   ±% band around POC for factor 6.
         fib_50_tolerance_pct: ±% band around Fibonacci 50% for factor 10.
         sweep_lookback:      Max bars since last liquidity sweep for factor 4.
+        df_daily:            Optional daily OHLCV DataFrame for the 1D bias gate.
+                             When provided, signals that conflict with the last
+                             closed daily candle direction are rejected.
     """
 
     def __init__(
@@ -65,6 +69,7 @@ class SMCStrategy(Strategy):
         poc_tolerance_pct:   float = 0.003,
         fib_50_tolerance_pct: float = 0.003,
         sweep_lookback:      int   = 10,
+        df_daily:            pd.DataFrame | None = None,
     ) -> None:
         self.swing_length        = swing_length
         self.internal_length     = internal_length
@@ -76,6 +81,7 @@ class SMCStrategy(Strategy):
         self.poc_tolerance_pct   = poc_tolerance_pct
         self.fib_50_tolerance_pct = fib_50_tolerance_pct
         self.sweep_lookback      = sweep_lookback
+        self.df_daily            = df_daily
 
         self._min_bars = max(swing_length, internal_length) * 2
 
@@ -117,6 +123,18 @@ class SMCStrategy(Strategy):
 
         if cs is None:
             return Signal(SignalType.NONE, 0.0, "no confluent signal", bar_index)
+
+        # Daily bias alignment gate
+        if self.df_daily is not None and timestamp is not None:
+            db = get_daily_bias(self.df_daily, timestamp)
+            if db != 0 and db != cs.direction:
+                db_name  = "bullish" if db == BULLISH else "bearish"
+                dir_name = "bullish" if cs.direction == BULLISH else "bearish"
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    f"daily bias {db_name} conflicts with signal {dir_name}",
+                    bar_index,
+                )
 
         return self._signal_from_score(cs, bar_index, self.min_score)
 

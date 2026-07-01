@@ -14,7 +14,7 @@ TestF3OrderBlock          — price inside active OB of correct direction
 TestF4LiquiditySweep      — recent sweep confirms direction
 TestF5FVG                 — price inside active FVG
 TestF6POC                 — price near Point of Control
-TestF7SessionLevel        — price near session H/L aligned with direction
+TestF7KillzoneSession     — timestamp inside London or NY kill zone window
 TestF8EntryModel          — GATE: internal_bias matches direction
 TestF9DiscountPremium     — price below/above POC
 TestF10Fib50              — price near Fibonacci 50 % midpoint
@@ -23,6 +23,7 @@ TestBestConfluence        — direction arbitration, tie-breaking, no-signal
 """
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from zeus.strategy.smc.fibonacci import FibZone
@@ -153,7 +154,7 @@ def _all_active_result(bar_index: int = 10) -> SMCResult:
       F4  BULLISH sweep at bar 8 (2 bars ago)
       F5  bullish FVG [98.0, 102.0]               — price 100 inside
       F6  poc=100 (price == poc → within 0.003)
-      F7  session low=100 (price == low → within 0.003)
+      F7  killzone timestamp — pass timestamp=london_ts to score_confluence
       F8  internal_bias = BULLISH
       F9  price(100) <= poc(100)                   — discount zone
       F10 fib 50% = 100.0 (mid of [90,110])        — price 100 within tol
@@ -589,52 +590,89 @@ class TestF6POC:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Factor 7 — Session Level
+# Factor 7 — Kill Zone Session
 # ──────────────────────────────────────────────────────────────────────────────
 
-class TestF7SessionLevel:
-    def _cs(self, price: float, direction: int, session_ranges: list,
-            bar_index: int = 10, tol: float = 0.003) -> ConfluenceScore:
-        r = _empty_result(session_ranges=session_ranges)
-        return score_confluence(r, price=price, bar_index=bar_index,
-                                direction=direction, session_tolerance_pct=tol)
+class TestF7KillzoneSession:
+    """F7 is active when the bar timestamp falls within London (07–11h) or NY (12–15h) UTC."""
 
-    def test_active_bullish_near_session_low(self):
-        sr = _session_range(low=100.0, high=110.0, formed_at=1)
-        cs = self._cs(price=100.0, direction=BULLISH, session_ranges=[sr])
+    def _ts(self, hour: int, minute: int = 0) -> pd.Timestamp:
+        return pd.Timestamp(f"2025-01-01 {hour:02d}:{minute:02d}:00", tz="UTC")
+
+    def _cs(self, timestamp, direction: int = BULLISH) -> ConfluenceScore:
+        r = _empty_result()
+        return score_confluence(r, price=100.0, bar_index=0,
+                                direction=direction, timestamp=timestamp)
+
+    def test_active_during_london_killzone(self):
+        cs = self._cs(self._ts(9, 0))   # 09:00 UTC — inside London KZ
         assert cs.factors[6].active is True
 
-    def test_active_bearish_near_session_high(self):
-        sr = _session_range(low=90.0, high=100.0, formed_at=1)
-        cs = self._cs(price=100.0, direction=BEARISH, session_ranges=[sr])
+    def test_active_at_london_kz_start(self):
+        cs = self._cs(self._ts(7, 0))   # 07:00 UTC — inclusive start
         assert cs.factors[6].active is True
 
-    def test_inactive_bullish_near_session_high(self):
-        # Bullish requires being near session LOW, not high
-        sr = _session_range(low=90.0, high=100.0, formed_at=1)
-        cs = self._cs(price=100.0, direction=BULLISH, session_ranges=[sr])
+    def test_inactive_at_london_kz_end(self):
+        cs = self._cs(self._ts(11, 0))  # 11:00 UTC — exclusive end
         assert cs.factors[6].active is False
 
-    def test_inactive_bearish_near_session_low(self):
-        # Bearish requires being near session HIGH, not low
-        sr = _session_range(low=100.0, high=110.0, formed_at=1)
-        cs = self._cs(price=100.0, direction=BEARISH, session_ranges=[sr])
+    def test_active_during_ny_killzone(self):
+        cs = self._cs(self._ts(13, 30))  # 13:30 UTC — inside NY KZ
+        assert cs.factors[6].active is True
+
+    def test_active_at_ny_kz_start(self):
+        cs = self._cs(self._ts(12, 0))  # 12:00 UTC — inclusive start
+        assert cs.factors[6].active is True
+
+    def test_inactive_at_ny_kz_end(self):
+        cs = self._cs(self._ts(15, 0))  # 15:00 UTC — exclusive end
         assert cs.factors[6].active is False
 
-    def test_inactive_when_no_session_ranges(self):
-        cs = self._cs(price=100.0, direction=BULLISH, session_ranges=[])
+    def test_inactive_outside_both_killzones_asian(self):
+        cs = self._cs(self._ts(3, 0))   # 03:00 UTC — Asian session
         assert cs.factors[6].active is False
 
-    def test_inactive_when_session_not_yet_formed(self):
-        sr = _session_range(low=100.0, high=110.0, formed_at=20)
-        cs = self._cs(price=100.0, direction=BULLISH, session_ranges=[sr], bar_index=10)
+    def test_inactive_in_gap_between_killzones(self):
+        cs = self._cs(self._ts(11, 30))  # 11:30 UTC — gap between London and NY
         assert cs.factors[6].active is False
 
-    def test_price_far_from_session_low_inactive(self):
-        sr = _session_range(low=90.0, high=110.0, formed_at=1)
-        cs = self._cs(price=100.0, direction=BULLISH, session_ranges=[sr])
-        # |100 - 90| / 90 ≈ 11% >> 0.3% tolerance
+    def test_inactive_after_ny_close(self):
+        cs = self._cs(self._ts(20, 0))  # 20:00 UTC — after NY KZ
         assert cs.factors[6].active is False
+
+    def test_inactive_when_no_timestamp(self):
+        cs = self._cs(timestamp=None)
+        assert cs.factors[6].active is False
+
+    def test_detail_shows_london_label(self):
+        cs = self._cs(self._ts(9, 0))
+        assert "London" in cs.factors[6].detail
+
+    def test_detail_shows_ny_label(self):
+        cs = self._cs(self._ts(13, 0))
+        assert "NY" in cs.factors[6].detail
+
+    def test_detail_shows_outside_when_inactive(self):
+        cs = self._cs(self._ts(3, 0))
+        assert "outside" in cs.factors[6].detail
+
+    def test_direction_agnostic_bullish_and_bearish_both_fire(self):
+        """F7 is not direction-filtered — it fires for both BULLISH and BEARISH."""
+        ts = self._ts(9, 0)
+        cs_bull = self._cs(ts, direction=BULLISH)
+        cs_bear = self._cs(ts, direction=BEARISH)
+        assert cs_bull.factors[6].active is True
+        assert cs_bear.factors[6].active is True
+
+    def test_tz_aware_timestamp_supported(self):
+        ts = pd.Timestamp("2025-01-15 10:00:00+00:00")  # 10:00 UTC — London KZ
+        cs = self._cs(ts)
+        assert cs.factors[6].active is True
+
+    def test_tz_naive_treated_as_utc(self):
+        ts = pd.Timestamp("2025-01-15 09:00:00")  # tz-naive — treated as UTC
+        cs = self._cs(ts)
+        assert cs.factors[6].active is True
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -799,12 +837,13 @@ class TestScoreConfluence:
 
     def test_perfect_10_score(self):
         r = _all_active_result(bar_index=10)
-        # For F2 to fire, price must be in OTE zone [94.28, 97.64]
-        # But F5/F3/F6/F7/F9 require price 100
+        # F7 requires a timestamp inside a kill zone; use 09:00 UTC (London KZ)
+        london_ts = pd.Timestamp("2025-01-01 09:00:00", tz="UTC")
         # Use price=100.0 which hits F1,F3,F4,F5,F6,F7,F8,F9,F10 but NOT F2
         # (OTE zone is 94.28–97.64; price=100 is above)
         # → 9 factors active
-        cs = score_confluence(r, price=100.0, bar_index=10, direction=BULLISH)
+        cs = score_confluence(r, price=100.0, bar_index=10, direction=BULLISH,
+                              timestamp=london_ts)
         # Verify specific factors are active/inactive
         assert cs.factors[0].active is True   # F1: swing_bias=BULLISH
         assert cs.factors[1].active is False  # F2: price 100 not in OTE [94.28,97.64]
@@ -812,7 +851,7 @@ class TestScoreConfluence:
         assert cs.factors[3].active is True   # F4: sweep at bar 8 (2 bars ago ≤ 10)
         assert cs.factors[4].active is True   # F5: price 100 in FVG [98,102]
         assert cs.factors[5].active is True   # F6: poc=100, price=100
-        assert cs.factors[6].active is True   # F7: session low=100
+        assert cs.factors[6].active is True   # F7: timestamp 09:00 UTC → London KZ
         assert cs.factors[7].active is True   # F8: internal_bias=BULLISH
         assert cs.factors[8].active is True   # F9: price(100) <= poc(100)
         assert cs.factors[9].active is True   # F10: fib 50%=100.0, price=100.0

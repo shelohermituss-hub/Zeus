@@ -12,8 +12,14 @@ from zeus.strategy.smc.session import (
     SessionRange,
     detect_session_ranges,
     get_session_ranges,
+    get_daily_bias,
+    is_in_killzone,
+    killzone_name,
     last_session_range,
+    LONDON_KZ,
+    NY_KZ,
 )
+from zeus.strategy.smc.pivot import BEARISH, BULLISH
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -346,3 +352,197 @@ class TestLastSessionRange:
     def test_returns_none_when_no_match_for_type(self, ranges):
         # At bar 7 nothing is formed yet
         assert last_session_range(ranges, at_bar=7, session=SessionType.ASIAN) is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Kill Zone detection — is_in_killzone / killzone_name
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _ts(hour: int, minute: int = 0, tz: str = "UTC") -> pd.Timestamp:
+    return pd.Timestamp(f"2025-01-15 {hour:02d}:{minute:02d}:00", tz=tz)
+
+
+class TestKillZoneConstants:
+    def test_london_kz_starts_at_07(self):
+        assert LONDON_KZ[0] == 7 and LONDON_KZ[1] == 0
+
+    def test_london_kz_ends_at_11(self):
+        assert LONDON_KZ[2] == 11 and LONDON_KZ[3] == 0
+
+    def test_ny_kz_starts_at_12(self):
+        assert NY_KZ[0] == 12 and NY_KZ[1] == 0
+
+    def test_ny_kz_ends_at_15(self):
+        assert NY_KZ[2] == 15 and NY_KZ[3] == 0
+
+
+class TestIsInKillzone:
+    # London KZ: 07:00–11:00 UTC
+    def test_london_open_is_in_killzone(self):
+        assert is_in_killzone(_ts(7, 0)) is True
+
+    def test_london_mid_is_in_killzone(self):
+        assert is_in_killzone(_ts(9, 30)) is True
+
+    def test_london_last_minute_is_in_killzone(self):
+        assert is_in_killzone(_ts(10, 59)) is True
+
+    def test_london_end_is_outside(self):
+        # 11:00 is excluded (half-open interval)
+        assert is_in_killzone(_ts(11, 0)) is False
+
+    # NY KZ: 12:00–15:00 UTC
+    def test_ny_open_is_in_killzone(self):
+        assert is_in_killzone(_ts(12, 0)) is True
+
+    def test_ny_mid_is_in_killzone(self):
+        assert is_in_killzone(_ts(13, 30)) is True
+
+    def test_ny_last_minute_is_in_killzone(self):
+        assert is_in_killzone(_ts(14, 59)) is True
+
+    def test_ny_end_is_outside(self):
+        assert is_in_killzone(_ts(15, 0)) is False
+
+    # Outside both KZs
+    def test_asian_session_is_outside(self):
+        assert is_in_killzone(_ts(3, 0)) is False
+
+    def test_afternoon_is_outside(self):
+        assert is_in_killzone(_ts(16, 0)) is False
+
+    def test_midnight_is_outside(self):
+        assert is_in_killzone(_ts(0, 0)) is False
+
+    def test_gap_between_kzs_is_outside(self):
+        # 11:00–12:00 is the gap between London KZ and NY KZ
+        assert is_in_killzone(_ts(11, 30)) is False
+
+    # Timezone-aware timestamps
+    def test_tz_aware_utc_timestamp(self):
+        ts = pd.Timestamp("2025-01-15 08:30:00", tz="UTC")
+        assert is_in_killzone(ts) is True
+
+    def test_tz_aware_non_utc_converts_correctly(self):
+        # 10:00 Paris (UTC+1) = 09:00 UTC → inside London KZ
+        ts = pd.Timestamp("2025-01-15 10:00:00", tz="Europe/Paris")
+        assert is_in_killzone(ts) is True
+
+    def test_edge_06h59_is_outside(self):
+        assert is_in_killzone(_ts(6, 59)) is False
+
+    def test_edge_07h00_is_inside(self):
+        assert is_in_killzone(_ts(7, 0)) is True
+
+
+class TestKillzoneName:
+    def test_london_returns_london(self):
+        assert killzone_name(_ts(8, 0)) == "London"
+
+    def test_ny_returns_ny(self):
+        assert killzone_name(_ts(13, 0)) == "NY"
+
+    def test_outside_returns_none(self):
+        assert killzone_name(_ts(4, 0)) is None
+
+    def test_gap_returns_none(self):
+        assert killzone_name(_ts(11, 30)) is None
+
+    def test_london_boundary_start(self):
+        assert killzone_name(_ts(7, 0)) == "London"
+
+    def test_london_boundary_end_excluded(self):
+        assert killzone_name(_ts(11, 0)) is None
+
+    def test_ny_boundary_start(self):
+        assert killzone_name(_ts(12, 0)) == "NY"
+
+    def test_ny_boundary_end_excluded(self):
+        assert killzone_name(_ts(15, 0)) is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# get_daily_bias
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _daily_df(opens: list[float], closes: list[float],
+              start: str = "2024-01-01") -> pd.DataFrame:
+    """Build a daily OHLCV DataFrame (tz-naive UTC, daily frequency)."""
+    idx = pd.date_range(start, periods=len(opens), freq="D")
+    return pd.DataFrame(
+        {"open": opens, "high": closes, "low": opens, "close": closes},
+        index=idx,
+    )
+
+
+class TestGetDailyBias:
+    """Tests for get_daily_bias(df_daily, ltf_ts)."""
+
+    def _ltf(self, date: str, hour: int = 9) -> pd.Timestamp:
+        return pd.Timestamp(f"{date} {hour:02d}:00:00")
+
+    def test_bullish_candle_returns_bullish(self):
+        df = _daily_df([100.0], [110.0], "2024-01-01")
+        ts = self._ltf("2024-01-02")
+        assert get_daily_bias(df, ts) == BULLISH
+
+    def test_bearish_candle_returns_bearish(self):
+        df = _daily_df([110.0], [100.0], "2024-01-01")
+        ts = self._ltf("2024-01-02")
+        assert get_daily_bias(df, ts) == BEARISH
+
+    def test_doji_candle_returns_zero(self):
+        df = _daily_df([100.0], [100.0], "2024-01-01")
+        ts = self._ltf("2024-01-02")
+        assert get_daily_bias(df, ts) == 0
+
+    def test_no_prior_bar_returns_zero(self):
+        df = _daily_df([100.0], [110.0], "2024-01-02")
+        ts = self._ltf("2024-01-02")  # same day as only daily bar
+        assert get_daily_bias(df, ts) == 0
+
+    def test_empty_df_returns_zero(self):
+        df = pd.DataFrame(
+            {"open": [], "high": [], "low": [], "close": []},
+            index=pd.DatetimeIndex([]),
+        )
+        assert get_daily_bias(df, self._ltf("2024-01-05")) == 0
+
+    def test_uses_last_closed_candle_not_current_day(self):
+        # Jan 1 bearish, Jan 2 bullish — LTF at Jan 2 09:00 should use Jan 1 only
+        df = _daily_df([110.0, 100.0], [100.0, 120.0], "2024-01-01")
+        ts = self._ltf("2024-01-02")
+        assert get_daily_bias(df, ts) == BEARISH
+
+    def test_intraday_bar_uses_previous_day(self):
+        # LTF bar at 09:00 on Jan 3 → should see Jan 2 daily bias
+        df = _daily_df([100.0, 100.0, 100.0], [110.0, 90.0, 105.0], "2024-01-01")
+        ts = self._ltf("2024-01-03", hour=9)
+        assert get_daily_bias(df, ts) == BEARISH  # Jan 2 close=90 < open=100
+
+    def test_bar_at_midnight_uses_previous_day(self):
+        # Bar at 2024-01-02 00:00 → uses Jan 1 daily candle
+        df = _daily_df([100.0], [115.0], "2024-01-01")
+        ts = pd.Timestamp("2024-01-02 00:00:00")
+        assert get_daily_bias(df, ts) == BULLISH
+
+    def test_multiple_prior_bars_uses_most_recent(self):
+        # 5 daily bars; LTF at Jan 6 → should use Jan 5 (index 4)
+        opens  = [100.0, 100.0, 100.0, 100.0, 100.0]
+        closes = [110.0, 110.0, 110.0, 110.0,  90.0]  # Jan 5 is bearish
+        df = _daily_df(opens, closes, "2024-01-01")
+        ts = self._ltf("2024-01-06")
+        assert get_daily_bias(df, ts) == BEARISH
+
+    def test_returns_int_type(self):
+        df = _daily_df([100.0], [110.0], "2024-01-01")
+        result = get_daily_bias(df, self._ltf("2024-01-02"))
+        assert isinstance(result, int)
+
+    def test_bullish_value_is_plus_one(self):
+        df = _daily_df([100.0], [110.0], "2024-01-01")
+        assert get_daily_bias(df, self._ltf("2024-01-02")) == 1
+
+    def test_bearish_value_is_minus_one(self):
+        df = _daily_df([110.0], [100.0], "2024-01-01")
+        assert get_daily_bias(df, self._ltf("2024-01-02")) == -1

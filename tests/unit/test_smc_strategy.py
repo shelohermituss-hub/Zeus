@@ -73,9 +73,8 @@ class TestSMCStrategyInit:
 
     def test_default_tolerances(self):
         s = SMCStrategy()
-        assert s.poc_tolerance_pct     == pytest.approx(0.003)
-        assert s.session_tolerance_pct == pytest.approx(0.003)
-        assert s.fib_50_tolerance_pct  == pytest.approx(0.003)
+        assert s.poc_tolerance_pct    == pytest.approx(0.003)
+        assert s.fib_50_tolerance_pct == pytest.approx(0.003)
 
     def test_default_volume_profile_params(self):
         s = SMCStrategy()
@@ -250,7 +249,6 @@ class TestGenerateSignalMocked:
             min_score=4.0,
             sweep_lookback=8,
             poc_tolerance_pct=0.005,
-            session_tolerance_pct=0.004,
             fib_50_tolerance_pct=0.006,
             vol_num_bins=50,
             vol_value_area_pct=0.80,
@@ -322,11 +320,11 @@ class TestGenerateSignalMocked:
             strategy.generate_signal(df, bar_index=50)
 
             _, kwargs = mock_bc.call_args
-            assert kwargs.get("min_score",             None) == pytest.approx(4.0)
-            assert kwargs.get("poc_tolerance_pct",     None) == pytest.approx(0.005)
-            assert kwargs.get("session_tolerance_pct", None) == pytest.approx(0.004)
-            assert kwargs.get("fib_50_tolerance_pct",  None) == pytest.approx(0.006)
-            assert kwargs.get("sweep_lookback",        None) == 8
+            assert kwargs.get("min_score",           None) == pytest.approx(4.0)
+            assert kwargs.get("poc_tolerance_pct",   None) == pytest.approx(0.005)
+            assert kwargs.get("fib_50_tolerance_pct", None) == pytest.approx(0.006)
+            assert kwargs.get("sweep_lookback",      None) == 8
+            assert "timestamp" in kwargs
 
     def test_analyze_window_is_sliced_to_bar_index(self, strategy, df):
         """analyze() must only see bars up to and including bar_index."""
@@ -433,3 +431,126 @@ class TestGenerateSignalEndToEnd:
         df = _synthetic_df(n=200).drop(columns=["volume"])
         sig = strategy.generate_signal(df, bar_index=199)
         assert isinstance(sig, Signal)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Daily bias gate (Recommendation 2)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_daily_df(open_: float, close: float, date: str = "2024-01-01") -> pd.DataFrame:
+    """Single-row daily OHLCV DataFrame."""
+    idx = pd.DatetimeIndex([pd.Timestamp(date)])
+    return pd.DataFrame(
+        {"open": [open_], "high": [max(open_, close)],
+         "low": [min(open_, close)], "close": [close]},
+        index=idx,
+    )
+
+
+class TestDailyBiasGate:
+    """
+    Verify that df_daily=... filters conflicting signals.
+
+    All tests patch best_confluence() to control the signal direction;
+    only the daily bias gate logic is under test here.
+    """
+
+    @pytest.fixture
+    def df_ltf(self):
+        """LTF DataFrame with a DatetimeIndex so timestamp is available."""
+        idx = pd.date_range("2024-01-02 00:00", periods=200, freq="1h")
+        base = _synthetic_df(n=200, seed=7)
+        base.index = idx
+        return base
+
+    def test_no_df_daily_never_filters(self, df_ltf):
+        """Without df_daily the gate is disabled — signal passes through."""
+        cs = _make_score(BULLISH, [1, 2, 3, 4, 5, 8])
+        s  = SMCStrategy(swing_length=10, internal_length=3, atr_period=20)
+        with patch("zeus.strategy.smc_strategy.analyze") as mock_a, \
+             patch("zeus.strategy.smc_strategy.best_confluence", return_value=cs):
+            mock_a.return_value = MagicMock()
+            sig = s.generate_signal(df_ltf, bar_index=100)
+        assert sig.type == SignalType.LONG
+
+    def test_aligned_daily_bias_passes_signal(self, df_ltf):
+        """Bullish daily + bullish signal → no rejection."""
+        df_daily = _make_daily_df(open_=100.0, close=110.0, date="2024-01-01")
+        cs       = _make_score(BULLISH, [1, 2, 3, 4, 5, 8])
+        s = SMCStrategy(swing_length=10, internal_length=3, atr_period=20,
+                        df_daily=df_daily)
+        with patch("zeus.strategy.smc_strategy.analyze") as mock_a, \
+             patch("zeus.strategy.smc_strategy.best_confluence", return_value=cs):
+            mock_a.return_value = MagicMock()
+            sig = s.generate_signal(df_ltf, bar_index=100)
+        assert sig.type == SignalType.LONG
+
+    def test_conflicting_daily_bias_rejects_signal(self, df_ltf):
+        """Bearish daily + bullish signal → NONE."""
+        df_daily = _make_daily_df(open_=110.0, close=100.0, date="2024-01-01")
+        cs       = _make_score(BULLISH, [1, 2, 3, 4, 5, 8])
+        s = SMCStrategy(swing_length=10, internal_length=3, atr_period=20,
+                        df_daily=df_daily)
+        with patch("zeus.strategy.smc_strategy.analyze") as mock_a, \
+             patch("zeus.strategy.smc_strategy.best_confluence", return_value=cs):
+            mock_a.return_value = MagicMock()
+            sig = s.generate_signal(df_ltf, bar_index=100)
+        assert sig.type == SignalType.NONE
+
+    def test_conflicting_reason_mentions_daily_bias(self, df_ltf):
+        """Rejected signal reason mentions 'daily bias'."""
+        df_daily = _make_daily_df(open_=110.0, close=100.0, date="2024-01-01")
+        cs       = _make_score(BULLISH, [1, 2, 3, 4, 5, 8])
+        s = SMCStrategy(swing_length=10, internal_length=3, atr_period=20,
+                        df_daily=df_daily)
+        with patch("zeus.strategy.smc_strategy.analyze") as mock_a, \
+             patch("zeus.strategy.smc_strategy.best_confluence", return_value=cs):
+            mock_a.return_value = MagicMock()
+            sig = s.generate_signal(df_ltf, bar_index=100)
+        assert "daily bias" in sig.reason.lower()
+
+    def test_doji_daily_does_not_filter(self, df_ltf):
+        """Neutral daily (doji, close == open) → gate inactive, signal passes."""
+        df_daily = _make_daily_df(open_=100.0, close=100.0, date="2024-01-01")
+        cs       = _make_score(BULLISH, [1, 2, 3, 4, 5, 8])
+        s = SMCStrategy(swing_length=10, internal_length=3, atr_period=20,
+                        df_daily=df_daily)
+        with patch("zeus.strategy.smc_strategy.analyze") as mock_a, \
+             patch("zeus.strategy.smc_strategy.best_confluence", return_value=cs):
+            mock_a.return_value = MagicMock()
+            sig = s.generate_signal(df_ltf, bar_index=100)
+        assert sig.type == SignalType.LONG
+
+    def test_short_signal_aligned_with_bearish_daily_passes(self, df_ltf):
+        """Bearish daily + short signal → passes."""
+        df_daily = _make_daily_df(open_=110.0, close=100.0, date="2024-01-01")
+        cs       = _make_score(BEARISH, [1, 2, 3, 4, 5, 8])
+        s = SMCStrategy(swing_length=10, internal_length=3, atr_period=20,
+                        df_daily=df_daily)
+        with patch("zeus.strategy.smc_strategy.analyze") as mock_a, \
+             patch("zeus.strategy.smc_strategy.best_confluence", return_value=cs):
+            mock_a.return_value = MagicMock()
+            sig = s.generate_signal(df_ltf, bar_index=100)
+        assert sig.type == SignalType.SHORT
+
+    def test_no_datetime_index_gate_skipped(self):
+        """Without DatetimeIndex timestamp is None → daily bias gate skipped."""
+        df_daily = _make_daily_df(open_=110.0, close=100.0, date="2024-01-01")
+        df_ltf   = _synthetic_df(n=200, seed=3)  # integer index, no timestamps
+        cs       = _make_score(BULLISH, [1, 2, 3, 4, 5, 8])
+        s = SMCStrategy(swing_length=10, internal_length=3, atr_period=20,
+                        df_daily=df_daily)
+        with patch("zeus.strategy.smc_strategy.analyze") as mock_a, \
+             patch("zeus.strategy.smc_strategy.best_confluence", return_value=cs):
+            mock_a.return_value = MagicMock()
+            sig = s.generate_signal(df_ltf, bar_index=100)
+        # Gate requires timestamp; without it the signal should pass unfiltered
+        assert sig.type == SignalType.LONG
+
+    def test_df_daily_stored_as_attribute(self):
+        df_daily = _make_daily_df(100.0, 110.0)
+        s = SMCStrategy(df_daily=df_daily)
+        assert s.df_daily is df_daily
+
+    def test_default_df_daily_is_none(self):
+        assert SMCStrategy().df_daily is None
