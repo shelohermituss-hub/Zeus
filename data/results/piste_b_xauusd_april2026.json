@@ -1,0 +1,155 @@
+{
+  "meta": {
+    "symbol": "XAUUSD",
+    "start": "2026-04-01",
+    "end": "2026-04-30",
+    "note": "Focus mensuel \u2014 avril 2026"
+  },
+  "variants": [
+    {
+      "id": "REF",
+      "name": "V2A_L3 reference",
+      "config": {
+        "id": "REF",
+        "name": "V2A_L3 reference",
+        "score": 3.0,
+        "sl": 6.0,
+        "max_sl": 10.0,
+        "ote": false,
+        "daily_bias": false,
+        "pattern": false,
+        "tp_ladder": "scalp"
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9851.28,
+        "net_pnl": -202.31,
+        "total_return_pct": -1.49,
+        "n_trades": 7,
+        "win_rate": 28.6,
+        "avg_win": 216.14,
+        "avg_loss": -105.47,
+        "profit_factor": 0.8197,
+        "max_drawdown_pct": 6.68,
+        "sharpe_ratio": -0.0018,
+        "total_fees": 107.23
+      }
+    },
+    {
+      "id": "PB_SL",
+      "name": "SL=20/30 + mtf_smc TP",
+      "config": {
+        "id": "PB_SL",
+        "name": "SL=20/30 + mtf_smc TP",
+        "score": 3.0,
+        "sl": 20.0,
+        "max_sl": 30.0,
+        "ote": false,
+        "daily_bias": false,
+        "pattern": false,
+        "tp_ladder": "mtf_smc"
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10814.52,
+        "net_pnl": 802.5,
+        "total_return_pct": 8.15,
+        "n_trades": 5,
+        "win_rate": 60.0,
+        "avg_win": 277.14,
+        "avg_loss": -2.41,
+        "profit_factor": 172.3087,
+        "max_drawdown_pct": 1.89,
+        "sharpe_ratio": 0.0104,
+        "total_fees": 24.09
+      }
+    },
+    {
+      "id": "PB_PAT",
+      "name": "PB_SL + candle pattern",
+      "config": {
+        "id": "PB_PAT",
+        "name": "PB_SL + candle pattern",
+        "score": 3.0,
+        "sl": 20.0,
+        "max_sl": 30.0,
+        "ote": false,
+        "daily_bias": false,
+        "pattern": true,
+        "tp_ladder": "mtf_smc"
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10537.98,
+        "net_pnl": 528.07,
+        "total_return_pct": 5.38,
+        "n_trades": 4,
+        "win_rate": 50.0,
+        "avg_win": 276.0,
+        "avg_loss": -2.4,
+        "profit_factor": 115.2111,
+        "max_drawdown_pct": 1.72,
+        "sharpe_ratio": 0.0079,
+        "total_fees": 19.15
+      }
+    },
+    {
+      "id": "PB_DB",
+      "name": "PB_PAT + daily bias",
+      "config": {
+        "id": "PB_DB",
+        "name": "PB_PAT + daily bias",
+        "score": 3.0,
+        "sl": 20.0,
+        "max_sl": 30.0,
+        "ote": false,
+        "daily_bias": true,
+        "pattern": true,
+        "tp_ladder": "mtf_smc"
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10537.98,
+        "net_pnl": 528.07,
+        "total_return_pct": 5.38,
+        "n_trades": 4,
+        "win_rate": 50.0,
+        "avg_win": 276.0,
+        "avg_loss": -2.4,
+        "profit_factor": 115.2111,
+        "max_drawdown_pct": 1.72,
+        "sharpe_ratio": 0.0079,
+        "total_fees": 19.15
+      }
+    },
+    {
+      "id": "PB_OTE",
+      "name": "All gates incl. OTE",
+      "config": {
+        "id": "PB_OTE",
+        "name": "All gates incl. OTE",
+        "score": 3.0,
+        "sl": 20.0,
+        "max_sl": 30.0,
+        "ote": true,
+        "daily_bias": true,
+        "pattern": true,
+        "tp_ladder": "mtf_smc"
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10000.0,
+        "net_pnl": 0.0,
+        "total_return_pct": 0.0,
+        "n_trades": 0,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 0.0,
+        "sharpe_ratio": 0.0,
+        "total_fees": 0.0
+      }
+    }
+  ]
+}
