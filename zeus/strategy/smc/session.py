@@ -253,6 +253,128 @@ def last_session_range(
 # Daily bias (Recommendation 2 — 1D alignment gate)
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Asian Range Sweep Confirmation (Recommendation 6)
+#
+# ICT killzone logic:
+#   Asian session (00:00–08:00 UTC) forms a range whose high/low represents
+#   trapped resting liquidity. During the London or NY kill zone, smart money
+#   sweeps the Asian extreme opposite to the intended direction before reversing:
+#   - Bullish setup: Asian LOW is swept (bar low < asian_low) → liquidity taken
+#   - Bearish setup: Asian HIGH is swept (bar high > asian_high) → liquidity taken
+#
+# The sweep must occur AFTER the Asian session closes (>= 08:00 UTC) and before
+# the current LTF bar.  Without a confirmed sweep the setup is not valid.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _tz_naive_utc(ts: pd.Timestamp) -> pd.Timestamp:
+    """Return *ts* as a tz-naive UTC Timestamp."""
+    if ts.tzinfo is not None:
+        return ts.tz_convert("UTC").replace(tzinfo=None)
+    return ts
+
+
+def _utc_index(df: pd.DataFrame) -> pd.DatetimeIndex:
+    """Return df.index as a tz-naive UTC DatetimeIndex."""
+    idx = df.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        raise ValueError("df must have a DatetimeIndex")
+    if idx.tz is not None:
+        return idx.tz_convert("UTC").tz_localize(None)
+    return idx
+
+
+_ASIAN_OPEN_H  = 0   # 00:00 UTC
+_ASIAN_CLOSE_H = 8   # 08:00 UTC
+
+
+def get_asian_range_for_day(
+    df: pd.DataFrame,
+    ltf_ts: pd.Timestamp,
+) -> tuple[float, float] | None:
+    """
+    Return (asian_high, asian_low) for the Asian session of ltf_ts's UTC calendar day.
+
+    The Asian session window is 00:00–08:00 UTC. This function only returns a
+    range when the session is fully closed (ltf_ts >= 08:00 UTC of the same day),
+    ensuring strategy code never reads a partially-formed range.
+
+    Args:
+        df:      LTF OHLCV DataFrame with a DatetimeIndex (UTC or tz-naive UTC).
+                 Requires ``high`` and ``low`` columns.
+        ltf_ts:  Current bar timestamp.
+
+    Returns:
+        (asian_high, asian_low) or None if the session has not closed yet or
+        no bars fall within the Asian window.
+    """
+    ts_utc   = _tz_naive_utc(ltf_ts)
+    day_start = ts_utc.normalize()                            # 00:00 UTC
+    asian_end = day_start + pd.Timedelta(hours=_ASIAN_CLOSE_H)
+
+    if ts_utc < asian_end:
+        return None   # Asian session still open
+
+    utc_idx    = _utc_index(df)
+    asian_mask = (utc_idx >= day_start) & (utc_idx < asian_end)
+    asian_bars = df.iloc[asian_mask.nonzero()[0]]
+
+    if len(asian_bars) == 0:
+        return None
+
+    return float(asian_bars["high"].max()), float(asian_bars["low"].min())
+
+
+def asian_range_swept(
+    df:        pd.DataFrame,
+    bar_index: int,
+    ltf_ts:    pd.Timestamp,
+    direction: int,
+) -> bool:
+    """
+    Return True if the Asian range extreme aligned with *direction* was swept
+    (taken out by a wick) between Asian close (08:00 UTC) and *bar_index* inclusive.
+
+    For a BULLISH setup: a bar's *low* must have gone below the Asian session low.
+    For a BEARISH setup: a bar's *high* must have gone above the Asian session high.
+
+    Args:
+        df:        LTF OHLCV DataFrame with DatetimeIndex and ``high``/``low`` columns.
+        bar_index: Index of the current bar in df (inclusive upper bound for sweep check).
+        ltf_ts:    Timestamp of bar_index (used to locate today's Asian range).
+        direction: BULLISH (+1) or BEARISH (-1).
+
+    Returns:
+        True if the sweep occurred; False if the Asian range is unavailable or
+        no sweep was detected.
+    """
+    asian_range = get_asian_range_for_day(df, ltf_ts)
+    if asian_range is None:
+        return False
+
+    asian_high, asian_low = asian_range
+
+    ts_utc    = _tz_naive_utc(ltf_ts)
+    day_start = ts_utc.normalize()
+    asian_end = day_start + pd.Timedelta(hours=_ASIAN_CLOSE_H)
+
+    utc_idx       = _utc_index(df)
+    post_asian    = utc_idx >= asian_end
+
+    highs = df["high"].to_numpy(dtype=float)
+    lows  = df["low"].to_numpy(dtype=float)
+
+    for i in range(bar_index + 1):
+        if not post_asian[i]:
+            continue
+        if direction == BULLISH and lows[i] < asian_low:
+            return True
+        if direction == BEARISH and highs[i] > asian_high:
+            return True
+
+    return False
+
+
 def get_daily_bias(df_daily: pd.DataFrame, ltf_ts: pd.Timestamp) -> int:
     """
     Return the directional bias of the last fully closed daily candle.

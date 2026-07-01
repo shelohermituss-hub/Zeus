@@ -18,6 +18,8 @@ from zeus.strategy.smc.session import (
     last_session_range,
     LONDON_KZ,
     NY_KZ,
+    get_asian_range_for_day,
+    asian_range_swept,
 )
 from zeus.strategy.smc.pivot import BEARISH, BULLISH
 
@@ -546,3 +548,203 @@ class TestGetDailyBias:
     def test_bearish_value_is_minus_one(self):
         df = _daily_df([110.0], [100.0], "2024-01-01")
         assert get_daily_bias(df, self._ltf("2024-01-02")) == -1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# get_asian_range_for_day
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _asian_df(
+    asian_high: float = 2010.0,
+    asian_low: float = 1990.0,
+    post_high: float = 2005.0,
+    post_low: float = 1985.0,
+    date: str = "2024-01-15",
+) -> pd.DataFrame:
+    """
+    24-bar hourly DataFrame for one day:
+    - bars 00-07: Asian session (custom high/low)
+    - bars 08-23: London + NY (custom high/low)
+    """
+    asian_hours = 8
+    post_hours  = 16
+    highs = [asian_high] * asian_hours + [post_high] * post_hours
+    lows  = [asian_low]  * asian_hours + [post_low]  * post_hours
+    opens = [(h + lo) / 2 for h, lo in zip(highs, lows)]
+    idx   = pd.date_range(f"{date} 00:00", periods=24, freq="1h")
+    return pd.DataFrame(
+        {"open": opens, "high": highs, "low": lows, "close": opens, "volume": [100.0] * 24},
+        index=idx,
+    )
+
+
+class TestGetAsianRangeForDay:
+    def test_returns_none_before_asian_close(self):
+        df = _asian_df()
+        # 07:00 UTC — Asian session still open
+        ts = pd.Timestamp("2024-01-15 07:00")
+        assert get_asian_range_for_day(df, ts) is None
+
+    def test_returns_none_at_exact_asian_close(self):
+        # 08:00 UTC is the FIRST post-Asian bar — range is now complete
+        # (Asian bars are 00-07; 08:00 is the first post-Asian bar, so we should get the range)
+        df = _asian_df(asian_high=2010.0, asian_low=1990.0)
+        ts = pd.Timestamp("2024-01-15 08:00")
+        result = get_asian_range_for_day(df, ts)
+        assert result is not None
+
+    def test_returns_high_low_after_asian_close(self):
+        df = _asian_df(asian_high=2010.0, asian_low=1990.0)
+        ts = pd.Timestamp("2024-01-15 10:00")
+        result = get_asian_range_for_day(df, ts)
+        assert result is not None
+        asian_high, asian_low = result
+        assert asian_high == pytest.approx(2010.0)
+        assert asian_low  == pytest.approx(1990.0)
+
+    def test_returns_none_when_no_asian_bars(self):
+        # DataFrame only covers 12:00-23:00 — no Asian bars
+        idx = pd.date_range("2024-01-15 12:00", periods=12, freq="1h")
+        df  = pd.DataFrame(
+            {"high": [2005.0] * 12, "low": [1995.0] * 12, "close": [2000.0] * 12},
+            index=idx,
+        )
+        ts = pd.Timestamp("2024-01-15 14:00")
+        assert get_asian_range_for_day(df, ts) is None
+
+    def test_high_is_maximum_across_asian_bars(self):
+        # Vary each Asian bar to ensure max is taken
+        highs = [2005, 2010, 2008, 2003, 2009, 2011, 2007, 2006] + [2004] * 16
+        lows  = [1995] * 24
+        idx   = pd.date_range("2024-01-15 00:00", periods=24, freq="1h")
+        df    = pd.DataFrame({"high": highs, "low": lows, "close": lows}, index=idx)
+        ts = pd.Timestamp("2024-01-15 10:00")
+        result = get_asian_range_for_day(df, ts)
+        assert result[0] == pytest.approx(2011.0)
+
+    def test_low_is_minimum_across_asian_bars(self):
+        highs = [2010.0] * 24
+        lows  = [1995, 1990, 1993, 1988, 1992, 1991, 1994, 1989] + [2000.0] * 16
+        idx   = pd.date_range("2024-01-15 00:00", periods=24, freq="1h")
+        df    = pd.DataFrame({"high": highs, "low": lows, "close": highs}, index=idx)
+        ts = pd.Timestamp("2024-01-15 10:00")
+        result = get_asian_range_for_day(df, ts)
+        assert result[1] == pytest.approx(1988.0)
+
+    def test_works_with_timezone_aware_index(self):
+        df = _asian_df(asian_high=2010.0, asian_low=1990.0)
+        df.index = df.index.tz_localize("UTC")
+        ts = pd.Timestamp("2024-01-15 10:00", tz="UTC")
+        result = get_asian_range_for_day(df, ts)
+        assert result is not None
+        assert result[0] == pytest.approx(2010.0)
+        assert result[1] == pytest.approx(1990.0)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# asian_range_swept
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestAsianRangeSwept:
+    """
+    Uses a 24-bar hourly DataFrame:
+      Asian session (00-07):  high=2010, low=1990
+      Post-Asian (08-23):     configurable per test
+    """
+
+    def _df_with_post(self, post_highs: list[float], post_lows: list[float],
+                      date: str = "2024-01-15") -> pd.DataFrame:
+        asian_h = [2010.0] * 8
+        asian_l = [1990.0] * 8
+        highs = asian_h + post_highs
+        lows  = asian_l + post_lows
+        idx   = pd.date_range(f"{date} 00:00", periods=len(highs), freq="1h")
+        return pd.DataFrame(
+            {"high": highs, "low": lows,
+             "close": [(h + lo) / 2 for h, lo in zip(highs, lows)]},
+            index=idx,
+        )
+
+    # BULLISH — Asian LOW must be pierced
+
+    def test_bullish_sweep_detected_when_low_pierced(self):
+        # Post bar at 09:00 dips to 1985 < Asian low (1990) → bullish sweep
+        post_h = [2005.0] * 16
+        post_l = [2000.0] * 1 + [1985.0] + [2000.0] * 14
+        df = self._df_with_post(post_h, post_l)
+        ts = pd.Timestamp("2024-01-15 14:00")
+        bar_index = df.index.get_loc(ts)
+        assert asian_range_swept(df, bar_index, ts, BULLISH) is True
+
+    def test_bullish_no_sweep_when_low_intact(self):
+        # All post-Asian bars stay above Asian low (1990)
+        post_h = [2005.0] * 16
+        post_l = [1992.0] * 16   # above 1990
+        df = self._df_with_post(post_h, post_l)
+        ts = pd.Timestamp("2024-01-15 14:00")
+        bar_index = df.index.get_loc(ts)
+        assert asian_range_swept(df, bar_index, ts, BULLISH) is False
+
+    def test_bullish_sweep_exactly_at_asian_low_is_not_a_sweep(self):
+        # Low equals Asian low exactly — not pierced
+        post_h = [2005.0] * 16
+        post_l = [1990.0] * 16   # equal, not below
+        df = self._df_with_post(post_h, post_l)
+        ts = pd.Timestamp("2024-01-15 14:00")
+        bar_index = df.index.get_loc(ts)
+        assert asian_range_swept(df, bar_index, ts, BULLISH) is False
+
+    # BEARISH — Asian HIGH must be pierced
+
+    def test_bearish_sweep_detected_when_high_pierced(self):
+        # Post bar at 09:00 spikes to 2015 > Asian high (2010) → bearish sweep
+        post_h = [2000.0] * 1 + [2015.0] + [2000.0] * 14
+        post_l = [1995.0] * 16
+        df = self._df_with_post(post_h, post_l)
+        ts = pd.Timestamp("2024-01-15 14:00")
+        bar_index = df.index.get_loc(ts)
+        assert asian_range_swept(df, bar_index, ts, BEARISH) is True
+
+    def test_bearish_no_sweep_when_high_intact(self):
+        post_h = [2008.0] * 16   # below 2010
+        post_l = [1995.0] * 16
+        df = self._df_with_post(post_h, post_l)
+        ts = pd.Timestamp("2024-01-15 14:00")
+        bar_index = df.index.get_loc(ts)
+        assert asian_range_swept(df, bar_index, ts, BEARISH) is False
+
+    def test_bearish_sweep_exactly_at_asian_high_is_not_a_sweep(self):
+        post_h = [2010.0] * 16   # equal, not above
+        post_l = [1995.0] * 16
+        df = self._df_with_post(post_h, post_l)
+        ts = pd.Timestamp("2024-01-15 14:00")
+        bar_index = df.index.get_loc(ts)
+        assert asian_range_swept(df, bar_index, ts, BEARISH) is False
+
+    # Asian session still open → always False
+
+    def test_returns_false_during_asian_session(self):
+        df = _asian_df()
+        ts = pd.Timestamp("2024-01-15 06:00")
+        bar_index = df.index.get_loc(ts)
+        assert asian_range_swept(df, bar_index, ts, BULLISH) is False
+        assert asian_range_swept(df, bar_index, ts, BEARISH) is False
+
+    # Only bars at or before bar_index count
+
+    def test_sweep_after_bar_index_not_counted(self):
+        # Sweep happens at bar 20 (20:00), but we evaluate at bar 10 (10:00)
+        post_h = [2000.0] * 12 + [2015.0] * 4   # spike at index 20-23
+        post_l = [1995.0] * 16
+        df = self._df_with_post(post_h, post_l)
+        ts = pd.Timestamp("2024-01-15 10:00")
+        bar_index = df.index.get_loc(ts)
+        # Bearish sweep (2015 > 2010) occurs at bar 20, which is AFTER bar_index=10
+        assert asian_range_swept(df, bar_index, ts, BEARISH) is False
+
+    def test_timezone_aware_index_handled(self):
+        df = _asian_df(asian_high=2010.0, asian_low=1990.0, post_low=1985.0)
+        df.index = df.index.tz_localize("UTC")
+        ts = pd.Timestamp("2024-01-15 14:00", tz="UTC")
+        bar_index = df.index.get_loc(ts)
+        assert asian_range_swept(df, bar_index, ts, BULLISH) is True

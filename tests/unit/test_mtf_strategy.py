@@ -133,6 +133,14 @@ class TestMTFSMCStrategyInit:
         s = MTFSMCStrategy(df_htf=_make_htf(), require_entry_fvg=False)
         assert s._require_entry_fvg is False
 
+    def test_require_asian_sweep_default_false(self):
+        s = MTFSMCStrategy(df_htf=_make_htf())
+        assert s._require_asian_sweep is False
+
+    def test_require_asian_sweep_can_be_enabled(self):
+        s = MTFSMCStrategy(df_htf=_make_htf(), require_asian_sweep=True)
+        assert s._require_asian_sweep is True
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Kill Zone gate
@@ -646,3 +654,161 @@ class TestEntryFVGTrigger:
         mock_ltf.assert_called_once()
         assert sig.type == SignalType.NONE
         assert "ltf entry" in sig.reason.lower()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Asian range sweep gate (step 3.7)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestAsianSweepGate:
+    """
+    Verify that the Asian range sweep gate (require_asian_sweep=True) correctly
+    rejects setups where the Asian extreme has not been taken out.
+
+    All tests use killzone_only=False and mock HTF analysis to isolate this gate.
+    """
+
+    _ASIAN_HIGH = 2010.0
+    _ASIAN_LOW  = 1990.0
+
+    def _make_ltf_with_asian(
+        self,
+        post_highs: list[float],
+        post_lows:  list[float],
+        date: str = "2024-01-15",
+    ) -> pd.DataFrame:
+        """
+        Hourly DataFrame: 8 Asian bars (00-07 UTC) + post-Asian bars from 08:00.
+        post_highs/post_lows must have the same length.
+        """
+        asian_h = [self._ASIAN_HIGH] * 8
+        asian_l = [self._ASIAN_LOW]  * 8
+        highs = asian_h + post_highs
+        lows  = asian_l + post_lows
+        idx   = pd.date_range(f"{date} 00:00", periods=len(highs), freq="1h")
+        closes = [(h + lo) / 2 for h, lo in zip(highs, lows)]
+        return pd.DataFrame(
+            {"open": closes, "high": highs, "low": lows,
+             "close": closes, "volume": [100.0] * len(highs)},
+            index=idx,
+        )
+
+    def _make_htf_aligned(self) -> pd.DataFrame:
+        """300-bar 4H HTF covering well before 2024-01-15."""
+        return _synthetic_ohlcv(n=300, seed=1, start="2022-01-01", freq="4h")
+
+    def _mock_htf(self, direction: int):
+        r = MagicMock()
+        r.swing_bias    = direction
+        r.internal_bias = direction
+        return r
+
+    def _make_strategy(self, require_asian_sweep: bool = True) -> MTFSMCStrategy:
+        return MTFSMCStrategy(
+            df_htf=self._make_htf_aligned(),
+            killzone_only=False,
+            swing_length=10,
+            internal_length=5,
+            require_asian_sweep=require_asian_sweep,
+        )
+
+    # ── Gate disabled ─────────────────────────────────────────────────────
+
+    def test_gate_disabled_no_asian_check(self):
+        """When require_asian_sweep=False the gate never fires."""
+        s = self._make_strategy(require_asian_sweep=False)
+        # Post-Asian: high stays below Asian high → bearish sweep never happened
+        df_ltf = self._make_ltf_with_asian(
+            post_highs=[2005.0] * 8,
+            post_lows=[1995.0]  * 8,
+        )
+        bar = len(df_ltf) - 1
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BEARISH)), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_bc.return_value = None
+            sig = s.generate_signal(df_ltf, bar_index=bar)
+        assert "asian range" not in sig.reason.lower()
+
+    # ── Gate enabled — bullish ────────────────────────────────────────────
+
+    def test_bullish_sweep_confirmed_passes_gate(self):
+        """Asian LOW pierced by a post-Asian bar → gate passes."""
+        s = self._make_strategy()
+        # One bar dips to 1985 (below Asian low 1990) → bullish sweep
+        post_h = [2005.0] * 8
+        post_l = [1985.0] + [1995.0] * 7
+        df_ltf = self._make_ltf_with_asian(post_highs=post_h, post_lows=post_l)
+        bar = len(df_ltf) - 1
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_bc.return_value = None
+            sig = s.generate_signal(df_ltf, bar_index=bar)
+        assert "asian range" not in sig.reason.lower()
+
+    def test_bullish_no_sweep_rejects(self):
+        """Asian LOW not pierced → gate rejects."""
+        s = self._make_strategy()
+        # All post-Asian bars stay above Asian low (1990)
+        post_h = [2005.0] * 8
+        post_l = [1992.0] * 8
+        df_ltf = self._make_ltf_with_asian(post_highs=post_h, post_lows=post_l)
+        bar = len(df_ltf) - 1
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)):
+            sig = s.generate_signal(df_ltf, bar_index=bar)
+        assert sig.type == SignalType.NONE
+        assert "asian range" in sig.reason.lower()
+
+    # ── Gate enabled — bearish ────────────────────────────────────────────
+
+    def test_bearish_sweep_confirmed_passes_gate(self):
+        """Asian HIGH pierced by a post-Asian bar → gate passes."""
+        s = self._make_strategy()
+        # One bar spikes to 2015 (above Asian high 2010) → bearish sweep
+        post_h = [2015.0] + [2005.0] * 7
+        post_l = [1995.0] * 8
+        df_ltf = self._make_ltf_with_asian(post_highs=post_h, post_lows=post_l)
+        bar = len(df_ltf) - 1
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BEARISH)), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_bc.return_value = None
+            sig = s.generate_signal(df_ltf, bar_index=bar)
+        assert "asian range" not in sig.reason.lower()
+
+    def test_bearish_no_sweep_rejects(self):
+        """Asian HIGH not pierced → gate rejects."""
+        s = self._make_strategy()
+        post_h = [2008.0] * 8   # below Asian high 2010
+        post_l = [1995.0] * 8
+        df_ltf = self._make_ltf_with_asian(post_highs=post_h, post_lows=post_l)
+        bar = len(df_ltf) - 1
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BEARISH)):
+            sig = s.generate_signal(df_ltf, bar_index=bar)
+        assert sig.type == SignalType.NONE
+        assert "asian range" in sig.reason.lower()
+
+    # ── Rejection signal shape ────────────────────────────────────────────
+
+    def test_rejection_confidence_zero(self):
+        s = self._make_strategy()
+        post_h = [2005.0] * 8
+        post_l = [1992.0] * 8
+        df_ltf = self._make_ltf_with_asian(post_highs=post_h, post_lows=post_l)
+        bar = len(df_ltf) - 1
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)):
+            sig = s.generate_signal(df_ltf, bar_index=bar)
+        assert sig.confidence == pytest.approx(0.0)
+
+    def test_rejection_bar_index_propagated(self):
+        s = self._make_strategy()
+        post_h = [2005.0] * 8
+        post_l = [1992.0] * 8
+        df_ltf = self._make_ltf_with_asian(post_highs=post_h, post_lows=post_l)
+        bar = len(df_ltf) - 1
+        with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)):
+            sig = s.generate_signal(df_ltf, bar_index=bar)
+        assert sig.bar_index == bar

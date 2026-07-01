@@ -30,7 +30,12 @@ import pandas as pd
 from zeus.strategy.base import Signal, SignalType, Strategy
 from zeus.strategy.confluence import PatternGrade, best_confluence
 from zeus.strategy.smc.indicator import SMCResult, analyze
-from zeus.strategy.smc.session import get_daily_bias, is_in_killzone, killzone_name
+from zeus.strategy.smc.session import (
+    asian_range_swept,
+    get_daily_bias,
+    is_in_killzone,
+    killzone_name,
+)
 from zeus.strategy.smc.order_block import get_active_order_blocks
 from zeus.strategy.smc.fvg import get_active_fvgs
 from zeus.strategy.smc.fibonacci import get_latest_fib_zone
@@ -79,6 +84,7 @@ class MTFSMCStrategy(Strategy):
         df_mtf:              pd.DataFrame | None = None,
         mss_lookback:        int                 = 10,
         require_entry_fvg:   bool                = True,
+        require_asian_sweep: bool                = False,
     ) -> None:
         self._df_htf             = df_htf
         self._min_htf_score      = min_htf_score
@@ -97,10 +103,11 @@ class MTFSMCStrategy(Strategy):
         self._killzone_only      = killzone_only
         self._df_daily           = df_daily
         self._sweep_zone_tol_pct = sweep_zone_tol_pct
-        self._df_mtf             = df_mtf
-        self._mss_lookback       = mss_lookback
-        self._require_entry_fvg  = require_entry_fvg
-        self._min_htf_bars       = max(swing_length, internal_length) * 2
+        self._df_mtf              = df_mtf
+        self._mss_lookback        = mss_lookback
+        self._require_entry_fvg   = require_entry_fvg
+        self._require_asian_sweep = require_asian_sweep
+        self._min_htf_bars        = max(swing_length, internal_length) * 2
 
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
         self._htf_cache: dict[int, SMCResult] = {}
@@ -167,6 +174,13 @@ class MTFSMCStrategy(Strategy):
         # ── 3.6. 1H MSS confirmation gate ────────────────────────────────
         if not self._mtf_mss_confirmed(ltf_ts, direction):
             return Signal(SignalType.NONE, 0.0, "1H MSS not confirmed", bar_index)
+
+        # ── 3.7. Asian range sweep gate ───────────────────────────────────
+        # The LTF low (bullish) or high (bearish) must have pierced the Asian
+        # session extreme before the current bar — confirming liquidity was taken.
+        if self._require_asian_sweep:
+            if not asian_range_swept(df, bar_index, ltf_ts, direction):
+                return Signal(SignalType.NONE, 0.0, "Asian range not swept", bar_index)
 
         # ── 4. Price inside active HTF zone ──────────────────────────────
         # Use LTF (1M) close price against HTF zones — this is the core of
