@@ -141,6 +141,26 @@ class TestMTFSMCStrategyInit:
         s = MTFSMCStrategy(df_htf=_make_htf(), require_asian_sweep=True)
         assert s._require_asian_sweep is True
 
+    def test_max_daily_signals_default(self):
+        s = MTFSMCStrategy(df_htf=_make_htf())
+        assert s._max_daily_signals == 2
+
+    def test_max_daily_signals_custom(self):
+        s = MTFSMCStrategy(df_htf=_make_htf(), max_daily_signals=3)
+        assert s._max_daily_signals == 3
+
+    def test_max_signals_per_session_default(self):
+        s = MTFSMCStrategy(df_htf=_make_htf())
+        assert s._max_signals_per_session == 1
+
+    def test_max_signals_per_session_custom(self):
+        s = MTFSMCStrategy(df_htf=_make_htf(), max_signals_per_session=2)
+        assert s._max_signals_per_session == 2
+
+    def test_signal_log_starts_empty(self):
+        s = MTFSMCStrategy(df_htf=_make_htf())
+        assert s._signal_log == []
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Kill Zone gate
@@ -812,3 +832,245 @@ class TestAsianSweepGate:
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)):
             sig = s.generate_signal(df_ltf, bar_index=bar)
         assert sig.bar_index == bar
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Daily / session frequency gate (step 7.5)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestDailyFrequencyLimit:
+    """
+    Verify that the frequency gate correctly limits signals per day and per session.
+
+    Strategy is configured with:
+      killzone_only=False        — to control session manually via signal_log
+      max_daily_signals=2        — default
+      max_signals_per_session=1  — default
+
+    All quality gates (HTF, zone, confluence, LTF, SL) are bypassed via mocks
+    so only the frequency gate is tested.
+    """
+
+    # ── Helpers ───────────────────────────────────────────────────────────
+
+    def _make_strategy(self, max_daily: int = 2, max_per_session: int = 1) -> MTFSMCStrategy:
+        return MTFSMCStrategy(
+            df_htf=_make_htf(),
+            killzone_only=False,
+            swing_length=10,
+            internal_length=5,
+            max_daily_signals=max_daily,
+            max_signals_per_session=max_per_session,
+        )
+
+    def _ltf_at(self, date: str = "2024-01-15", hour: int = 9,
+                n: int = 200) -> pd.DataFrame:
+        """LTF DataFrame whose last bar lands at UTC {date} {hour:02d}:00."""
+        end = pd.Timestamp(f"{date} {hour:02d}:00:00")
+        idx = pd.date_range(end=end, periods=n, freq="1min")
+        rng = np.random.default_rng(42)
+        c   = 2000.0 + np.cumsum(rng.normal(0, 1, n))
+        return pd.DataFrame(
+            {"open": c, "high": c + 1, "low": c - 1, "close": c, "volume": [10.0] * n},
+            index=idx,
+        )
+
+    def _mock_htf(self, direction: int = BULLISH):
+        r = MagicMock()
+        r.swing_bias    = direction
+        r.internal_bias = direction
+        return r
+
+    def _full_pass_mocks(self, s: MTFSMCStrategy, direction: int = BULLISH):
+        """Context manager that makes all quality gates return 'pass'."""
+        mock_cs = MagicMock()
+        mock_cs.active_count = 5
+        mock_cs.confidence   = 0.5
+        mock_cs.grade.return_value = MagicMock(value="C")
+
+        return (
+            patch.object(s, "_last_htf_bar", return_value=150),
+            patch.object(s, "_htf_analysis", return_value=self._mock_htf(direction)),
+            patch.object(s, "_in_htf_zone", return_value="OB"),
+            patch.object(s, "_ltf_entry_confirmed", return_value=True),
+            patch("zeus.strategy.mtf_strategy.best_confluence", return_value=mock_cs),
+        )
+
+    # ── No prior signals → always pass ────────────────────────────────────
+
+    def test_first_signal_of_day_passes(self):
+        s = self._make_strategy()
+        df = self._ltf_at(hour=9)   # London KZ
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert sig.type != SignalType.NONE or "limit" not in sig.reason.lower()
+
+    # ── Session limit ──────────────────────────────────────────────────────
+
+    def test_second_signal_same_session_rejected(self):
+        """max_signals_per_session=1: second London signal on same day → rejected."""
+        s = self._make_strategy(max_daily=5, max_per_session=1)
+        import datetime
+        s._signal_log.append((datetime.date(2024, 1, 15), "London"))
+        df = self._ltf_at(date="2024-01-15", hour=9)   # London KZ
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert sig.type == SignalType.NONE
+        assert "london" in sig.reason.lower()
+        assert "limit" in sig.reason.lower()
+
+    def test_second_signal_different_session_passes_session_gate(self):
+        """After one London signal, an NY signal is allowed (different session)."""
+        s = self._make_strategy(max_daily=5, max_per_session=1)
+        import datetime
+        s._signal_log.append((datetime.date(2024, 1, 15), "London"))
+        df = self._ltf_at(date="2024-01-15", hour=13)   # NY KZ (12-15 UTC)
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert "session limit" not in sig.reason.lower()
+
+    # ── Daily limit ────────────────────────────────────────────────────────
+
+    def test_daily_limit_reached_rejects(self):
+        """max_daily_signals=2: third signal on same day → rejected."""
+        s = self._make_strategy(max_daily=2, max_per_session=5)
+        import datetime
+        today = datetime.date(2024, 1, 15)
+        s._signal_log.append((today, "London"))
+        s._signal_log.append((today, "NY"))
+        df = self._ltf_at(date="2024-01-15", hour=13)
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert sig.type == SignalType.NONE
+        assert "daily" in sig.reason.lower()
+        assert "limit" in sig.reason.lower()
+
+    def test_daily_limit_only_counts_same_day(self):
+        """Log entries from yesterday do not count toward today's limit."""
+        s = self._make_strategy(max_daily=2, max_per_session=5)
+        import datetime
+        yesterday = datetime.date(2024, 1, 14)
+        s._signal_log.append((yesterday, "London"))
+        s._signal_log.append((yesterday, "NY"))
+        df = self._ltf_at(date="2024-01-15", hour=9)
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert "daily signal limit" not in sig.reason.lower()
+
+    # ── Limits disabled (= 0) ─────────────────────────────────────────────
+
+    def test_max_daily_zero_disables_daily_limit(self):
+        s = self._make_strategy(max_daily=0, max_per_session=0)
+        import datetime
+        today = datetime.date(2024, 1, 15)
+        # Pre-fill 10 signals today — daily limit disabled, should not block
+        s._signal_log.extend([(today, "London")] * 10)
+        df = self._ltf_at(date="2024-01-15", hour=13)
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert "limit" not in sig.reason.lower()
+
+    # ── Log grows on emission ─────────────────────────────────────────────
+
+    def test_signal_log_grows_on_emission(self):
+        """Each emitted signal is appended to _signal_log."""
+        s = self._make_strategy(max_daily=5, max_per_session=5)
+        df = self._ltf_at(hour=9)
+        assert len(s._signal_log) == 0
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        if sig.type != SignalType.NONE:
+            assert len(s._signal_log) == 1
+
+    # ── reset_signal_log ──────────────────────────────────────────────────
+
+    def test_reset_clears_log(self):
+        s = self._make_strategy()
+        import datetime
+        s._signal_log.append((datetime.date(2024, 1, 15), "London"))
+        s._signal_log.append((datetime.date(2024, 1, 15), "NY"))
+        s.reset_signal_log()
+        assert s._signal_log == []
+
+    def test_after_reset_first_signal_passes_gate(self):
+        """After reset, the daily limit no longer blocks."""
+        s = self._make_strategy(max_daily=2, max_per_session=5)
+        import datetime
+        today = datetime.date(2024, 1, 15)
+        s._signal_log.extend([(today, "London"), (today, "NY")])
+        s.reset_signal_log()
+        df = self._ltf_at(date="2024-01-15", hour=9)
+        with patch.object(s, "_last_htf_bar", return_value=150), \
+             patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
+             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_ltf_entry_confirmed", return_value=True), \
+             patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
+            mock_cs = MagicMock()
+            mock_cs.active_count = 5
+            mock_cs.confidence   = 0.5
+            mock_cs.grade.return_value = MagicMock(value="C")
+            mock_bc.return_value = mock_cs
+            sig = s.generate_signal(df, bar_index=len(df) - 1)
+        assert "daily signal limit" not in sig.reason.lower()

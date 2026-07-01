@@ -25,6 +25,7 @@ signal.reason includes:
 """
 from __future__ import annotations
 
+import datetime
 import pandas as pd
 
 from zeus.strategy.base import Signal, SignalType, Strategy
@@ -84,7 +85,9 @@ class MTFSMCStrategy(Strategy):
         df_mtf:              pd.DataFrame | None = None,
         mss_lookback:        int                 = 10,
         require_entry_fvg:   bool                = True,
-        require_asian_sweep: bool                = False,
+        require_asian_sweep:      bool = False,
+        max_daily_signals:        int  = 2,
+        max_signals_per_session:  int  = 1,
     ) -> None:
         self._df_htf             = df_htf
         self._min_htf_score      = min_htf_score
@@ -106,11 +109,16 @@ class MTFSMCStrategy(Strategy):
         self._df_mtf              = df_mtf
         self._mss_lookback        = mss_lookback
         self._require_entry_fvg   = require_entry_fvg
-        self._require_asian_sweep = require_asian_sweep
-        self._min_htf_bars        = max(swing_length, internal_length) * 2
+        self._require_asian_sweep     = require_asian_sweep
+        self._max_daily_signals       = max_daily_signals
+        self._max_signals_per_session = max_signals_per_session
+        self._min_htf_bars            = max(swing_length, internal_length) * 2
 
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
         self._htf_cache: dict[int, SMCResult] = {}
+
+        # Signal frequency log: list of (date, session_name | None) for each emitted signal
+        self._signal_log: list[tuple[datetime.date, str | None]] = []
 
     # ------------------------------------------------------------------ #
     # Strategy interface                                                   #
@@ -233,7 +241,32 @@ class MTFSMCStrategy(Strategy):
                 bar_index,
             )
 
+        # ── 7.5. Daily / session frequency gate ──────────────────────────
+        today   = ltf_ts.date()
+        session = killzone_name(ltf_ts)   # "London", "NY", or None
+
+        if self._max_daily_signals > 0:
+            signals_today = sum(1 for d, _ in self._signal_log if d == today)
+            if signals_today >= self._max_daily_signals:
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    f"daily signal limit reached ({self._max_daily_signals}/day)",
+                    bar_index,
+                )
+
+        if self._max_signals_per_session > 0 and session is not None:
+            signals_session = sum(
+                1 for d, s in self._signal_log if d == today and s == session
+            )
+            if signals_session >= self._max_signals_per_session:
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    f"{session} session limit reached ({self._max_signals_per_session}/session)",
+                    bar_index,
+                )
+
         # ── 8. Emit signal ────────────────────────────────────────────────
+        self._signal_log.append((today, session))
         stype  = SignalType.LONG if direction == BULLISH else SignalType.SHORT
         reason = (
             f"MTF grade={grade.value} score={cs.active_count}/10 "
@@ -244,6 +277,10 @@ class MTFSMCStrategy(Strategy):
     # ------------------------------------------------------------------ #
     # Internal helpers                                                     #
     # ------------------------------------------------------------------ #
+
+    def reset_signal_log(self) -> None:
+        """Clear the signal frequency log. Call at the start of each trading day."""
+        self._signal_log.clear()
 
     def _last_htf_bar(self, ltf_ts: pd.Timestamp) -> int:
         """Return the index of the last HTF bar whose open <= ltf_ts."""
