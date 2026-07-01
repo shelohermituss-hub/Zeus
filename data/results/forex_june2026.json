@@ -1,0 +1,118 @@
+{
+  "meta": {
+    "start": "2026-06-01",
+    "end": "2026-06-30",
+    "trading_days": 21,
+    "config": "NO_MSS"
+  },
+  "results": [
+    {
+      "instrument": "XAUUSD",
+      "pip_value": 1.0,
+      "n_bars_m1": 27237,
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10334.24,
+        "net_pnl": 325.44,
+        "total_return_pct": 3.34,
+        "n_trades": 4,
+        "win_rate": 25.0,
+        "avg_win": 449.74,
+        "avg_loss": -35.55,
+        "profit_factor": 4.2164,
+        "max_drawdown_pct": 2.23,
+        "sharpe_ratio": 0.007,
+        "total_fees": 17.63
+      },
+      "stats": {
+        "n": 4,
+        "wins": 1,
+        "wr": 25.0,
+        "pnl": 343.0764569163335,
+        "best": 449.73990976872733,
+        "worst": -102.19725310945245
+      }
+    },
+    {
+      "instrument": "GBPUSD",
+      "pip_value": 0.0001,
+      "n_bars_m1": 28249,
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10824.91,
+        "net_pnl": 810.29,
+        "total_return_pct": 8.25,
+        "n_trades": 2,
+        "win_rate": 100.0,
+        "avg_win": 418.77,
+        "avg_loss": 0.0,
+        "profit_factor": "inf",
+        "max_drawdown_pct": 1.11,
+        "sharpe_ratio": 0.018,
+        "total_fees": 27.25
+      },
+      "stats": {
+        "n": 2,
+        "wins": 2,
+        "wr": 100.0,
+        "pnl": 837.5434021411708,
+        "best": 454.0052594885,
+        "worst": 383.5381426526708
+      }
+    },
+    {
+      "instrument": "USDCAD",
+      "pip_value": 0.0001,
+      "n_bars_m1": 28266,
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10065.18,
+        "net_pnl": 23.08,
+        "total_return_pct": 0.65,
+        "n_trades": 6,
+        "win_rate": 16.7,
+        "avg_win": 443.03,
+        "avg_loss": -67.15,
+        "profit_factor": 1.3195,
+        "max_drawdown_pct": 3.32,
+        "sharpe_ratio": 0.0012,
+        "total_fees": 84.19
+      },
+      "stats": {
+        "n": 6,
+        "wins": 1,
+        "wr": 16.666666666666668,
+        "pnl": 107.26693611410391,
+        "best": 443.0309354436584,
+        "worst": -109.05206730574974
+      }
+    },
+    {
+      "instrument": "NZDUSD",
+      "pip_value": 0.0001,
+      "n_bars_m1": 28166,
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10481.46,
+        "net_pnl": 472.67,
+        "total_return_pct": 4.81,
+        "n_trades": 2,
+        "win_rate": 100.0,
+        "avg_win": 242.2,
+        "avg_loss": 0.0,
+        "profit_factor": "inf",
+        "max_drawdown_pct": 1.32,
+        "sharpe_ratio": 0.013,
+        "total_fees": 11.73
+      },
+      "stats": {
+        "n": 2,
+        "wins": 2,
+        "wr": 100.0,
+        "pnl": 484.39935013395905,
+        "best": 454.5743506475,
+        "worst": 29.824999486459046
+      }
+    }
+  ]
+}

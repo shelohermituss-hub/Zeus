@@ -57,17 +57,20 @@ def parse_histdata_csv(path: str | Path) -> pd.DataFrame:
     return df[["open", "high", "low", "close", "volume"]].sort_index()
 
 
-def load_m1_directory(data_dir: str | Path) -> pd.DataFrame:
+def load_m1_directory(
+    data_dir: str | Path,
+    glob_pattern: str = "DAT_MT_*_M1_*.csv",
+) -> pd.DataFrame:
     """
     Load and concatenate all HistData M1 CSV files found in *data_dir*.
 
-    Files are matched by the glob ``DAT_MT_XAUUSD_M1_*.csv`` and sorted
-    chronologically by filename before concatenation.
+    Files are matched by *glob_pattern* (default ``DAT_MT_*_M1_*.csv``) and
+    sorted chronologically by filename before concatenation.
 
     Duplicate index entries (weekend/holiday artefacts) are dropped.
     """
     data_dir = Path(data_dir)
-    files = sorted(data_dir.glob("DAT_MT_XAUUSD_M1_*.csv"))
+    files = sorted(data_dir.glob(glob_pattern))
     if not files:
         raise FileNotFoundError(f"No HistData CSVs found in {data_dir}")
 
