@@ -1,0 +1,213 @@
+{
+  "meta": {
+    "start": "2026-04-01",
+    "end": "2026-05-31",
+    "trading_days": 44
+  },
+  "variants": [
+    {
+      "id": "BASE",
+      "name": "TF1 baseline",
+      "config": {
+        "id": "BASE",
+        "name": "TF1 baseline",
+        "df_mtf": true,
+        "entry_fvg": true,
+        "daily_bias": true,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10520.74,
+        "net_pnl": 511.18,
+        "total_return_pct": 5.21,
+        "n_trades": 4,
+        "win_rate": 50.0,
+        "avg_win": 320.71,
+        "avg_loss": -55.55,
+        "profit_factor": 5.773,
+        "max_drawdown_pct": 1.82,
+        "sharpe_ratio": 0.0054,
+        "total_fees": 19.14
+      },
+      "monthly_pnl": {
+        "2026-04": 639.0438292514096,
+        "2026-05": -108.72602870418096
+      },
+      "monthly_n": {
+        "2026-04": 3,
+        "2026-05": 1
+      }
+    },
+    {
+      "id": "NO_MSS",
+      "name": "sans MSS 15M",
+      "config": {
+        "id": "NO_MSS",
+        "name": "sans MSS 15M",
+        "df_mtf": false,
+        "entry_fvg": true,
+        "daily_bias": true,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11131.26,
+        "net_pnl": 1111.84,
+        "total_return_pct": 11.31,
+        "n_trades": 8,
+        "win_rate": 50.0,
+        "avg_win": 290.15,
+        "avg_loss": -2.46,
+        "profit_factor": 118.0948,
+        "max_drawdown_pct": 2.0,
+        "sharpe_ratio": 0.0085,
+        "total_fees": 38.92
+      },
+      "monthly_pnl": {
+        "2026-04": 826.5883627646197,
+        "2026-05": 324.1713109589189
+      },
+      "monthly_n": {
+        "2026-04": 5,
+        "2026-05": 3
+      }
+    },
+    {
+      "id": "NO_FVG",
+      "name": "sans FVG 1M",
+      "config": {
+        "id": "NO_FVG",
+        "name": "sans FVG 1M",
+        "df_mtf": true,
+        "entry_fvg": false,
+        "daily_bias": true,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10627.05,
+        "net_pnl": 617.5,
+        "total_return_pct": 6.27,
+        "n_trades": 4,
+        "win_rate": 50.0,
+        "avg_win": 320.71,
+        "avg_loss": -2.39,
+        "profit_factor": 133.9512,
+        "max_drawdown_pct": 1.82,
+        "sharpe_ratio": 0.0063,
+        "total_fees": 19.14
+      },
+      "monthly_pnl": {
+        "2026-04": 639.0438292514096,
+        "2026-05": -2.4056505103690164
+      },
+      "monthly_n": {
+        "2026-04": 3,
+        "2026-05": 1
+      }
+    },
+    {
+      "id": "NO_BIAS",
+      "name": "sans daily bias",
+      "config": {
+        "id": "NO_BIAS",
+        "name": "sans daily bias",
+        "df_mtf": true,
+        "entry_fvg": true,
+        "daily_bias": false,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10589.55,
+        "net_pnl": 572.65,
+        "total_return_pct": 5.9,
+        "n_trades": 7,
+        "win_rate": 42.9,
+        "avg_win": 274.96,
+        "avg_loss": -54.6,
+        "profit_factor": 3.7767,
+        "max_drawdown_pct": 3.24,
+        "sharpe_ratio": 0.005,
+        "total_fees": 33.81
+      },
+      "monthly_pnl": {
+        "2026-04": 718.3252458021886,
+        "2026-05": -111.86518412643272
+      },
+      "monthly_n": {
+        "2026-04": 5,
+        "2026-05": 2
+      }
+    },
+    {
+      "id": "WIDE_SWEEP",
+      "name": "sweep lookback 10",
+      "config": {
+        "id": "WIDE_SWEEP",
+        "name": "sweep lookback 10",
+        "df_mtf": true,
+        "entry_fvg": true,
+        "daily_bias": true,
+        "sweep_lb": 10
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10520.74,
+        "net_pnl": 511.18,
+        "total_return_pct": 5.21,
+        "n_trades": 4,
+        "win_rate": 50.0,
+        "avg_win": 320.71,
+        "avg_loss": -55.55,
+        "profit_factor": 5.7729,
+        "max_drawdown_pct": 1.81,
+        "sharpe_ratio": 0.0054,
+        "total_fees": 19.14
+      },
+      "monthly_pnl": {
+        "2026-04": 639.042638607767,
+        "2026-05": -108.72600574746016
+      },
+      "monthly_n": {
+        "2026-04": 3,
+        "2026-05": 1
+      }
+    },
+    {
+      "id": "ALL_OFF",
+      "name": "tous les leviers",
+      "config": {
+        "id": "ALL_OFF",
+        "name": "tous les leviers",
+        "df_mtf": false,
+        "entry_fvg": false,
+        "daily_bias": false,
+        "sweep_lb": 10
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11143.24,
+        "net_pnl": 1099.44,
+        "total_return_pct": 11.43,
+        "n_trades": 18,
+        "win_rate": 33.3,
+        "avg_win": 253.91,
+        "avg_loss": -28.03,
+        "profit_factor": 4.5293,
+        "max_drawdown_pct": 4.61,
+        "sharpe_ratio": 0.0064,
+        "total_fees": 87.67
+      },
+      "monthly_pnl": {
+        "2026-04": 865.0410605415923,
+        "2026-05": 322.0702802128672
+      },
+      "monthly_n": {
+        "2026-04": 14,
+        "2026-05": 4
+      }
+    }
+  ]
+}
