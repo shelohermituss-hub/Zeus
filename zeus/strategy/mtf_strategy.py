@@ -42,6 +42,7 @@ from zeus.strategy.smc.session import (
     prev_session_liquidity_swept,
 )
 from zeus.strategy.smc.approach import compute_approach_quality
+from zeus.strategy.smc.ltf_sweep import ltf_liquidity_sweep
 from zeus.strategy.smc.order_block import get_active_order_blocks
 from zeus.strategy.smc.fvg import get_active_fvgs
 from zeus.strategy.smc.fibonacci import get_latest_fib_zone
@@ -103,6 +104,8 @@ class MTFSMCStrategy(Strategy):
         poc_zone_tolerance_pct:       float = 0.005,
         require_session_sweep:        bool  = False,
         session_sweep_lookback:       int   = 30,
+        require_ltf_sweep:            bool  = False,
+        ltf_sweep_lookback:           int   = 3,
         max_daily_signals:            int  = 2,
         max_signals_per_session:      int  = 1,
     ) -> None:
@@ -139,6 +142,8 @@ class MTFSMCStrategy(Strategy):
         self._poc_zone_tol                = poc_zone_tolerance_pct
         self._require_session_sweep       = require_session_sweep
         self._session_sweep_lookback      = session_sweep_lookback
+        self._require_ltf_sweep           = require_ltf_sweep
+        self._ltf_sweep_lookback          = ltf_sweep_lookback
         self._max_daily_signals           = max_daily_signals
 
         # Lazy cache — populated on first generate_signal() call with the LTF df
@@ -344,6 +349,24 @@ class MTFSMCStrategy(Strategy):
         # ── 6. 5M LTF entry trigger (bias + optional FVG) ────────────────
         if not self._ltf_entry_confirmed(df, bar_index, direction, close):
             return Signal(SignalType.NONE, 0.0, "LTF entry not confirmed", bar_index)
+
+        # ── 6.3. LTF liquidity sweep confirmation ────────────────────────
+        # Within the last ltf_sweep_lookback 1M bars, an entry bar must have
+        # swept the previous bar's high/low (taken resting stops) then closed
+        # back inside — the classic SMC inducement sweep at entry:
+        #   LONG  : bar.low < prev.low AND bar.close > prev.low
+        #   SHORT : bar.high > prev.high AND bar.close < prev.high
+        if self._require_ltf_sweep:
+            confirmed, sweep_reason = ltf_liquidity_sweep(
+                df, bar_index, direction,
+                lookback=self._ltf_sweep_lookback,
+            )
+            if not confirmed:
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    f"LTF sweep not confirmed: {sweep_reason}",
+                    bar_index,
+                )
 
         # ── 6.5. CHoCH candle confirmation (Rec 11) ──────────────────────
         # The entry bar itself must close in the trade direction:
