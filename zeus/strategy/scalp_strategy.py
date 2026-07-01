@@ -101,6 +101,9 @@ class ScalpSMCStrategy(MTFSMCStrategy):
             require_weekly_bias=False,
             require_asian_sweep=False,
             require_pd_filter=False,
+            # Scalp entries happen during 1H pullbacks: internal bias is allowed
+            # to be opposite to swing bias (that IS the setup — buy the dip).
+            require_htf_internal_align=False,
             max_daily_signals=max_daily_signals,
             max_signals_per_session=max_signals_per_session,
         )

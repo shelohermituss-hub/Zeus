@@ -86,12 +86,13 @@ class MTFSMCStrategy(Strategy):
         df_mtf:              pd.DataFrame | None = None,
         mss_lookback:        int                 = 10,
         require_entry_fvg:   bool                = True,
-        require_asian_sweep:      bool = False,
-        require_weekly_bias:      bool = False,
-        require_choch_candle:     bool = False,
-        require_pd_filter:        bool = False,
-        max_daily_signals:        int  = 2,
-        max_signals_per_session:  int  = 1,
+        require_asian_sweep:          bool = False,
+        require_weekly_bias:          bool = False,
+        require_choch_candle:         bool = False,
+        require_pd_filter:            bool = False,
+        require_htf_internal_align:   bool = True,
+        max_daily_signals:            int  = 2,
+        max_signals_per_session:      int  = 1,
     ) -> None:
         self._df_htf             = df_htf
         self._min_htf_score      = min_htf_score
@@ -113,12 +114,13 @@ class MTFSMCStrategy(Strategy):
         self._df_mtf              = df_mtf
         self._mss_lookback        = mss_lookback
         self._require_entry_fvg   = require_entry_fvg
-        self._require_asian_sweep     = require_asian_sweep
-        self._require_weekly_bias     = require_weekly_bias
-        self._require_choch_candle    = require_choch_candle
-        self._require_pd_filter       = require_pd_filter
-        self._max_daily_signals       = max_daily_signals
-        self._max_signals_per_session = max_signals_per_session
+        self._require_asian_sweep         = require_asian_sweep
+        self._require_weekly_bias         = require_weekly_bias
+        self._require_choch_candle        = require_choch_candle
+        self._require_pd_filter           = require_pd_filter
+        self._require_htf_internal_align  = require_htf_internal_align
+        self._max_daily_signals           = max_daily_signals
+        self._max_signals_per_session     = max_signals_per_session
         self._min_htf_bars            = max(swing_length, internal_length) * 2
 
         # Cache: htf_bar_index → SMCResult  (avoid re-running full analysis each 1M bar)
@@ -170,8 +172,9 @@ class MTFSMCStrategy(Strategy):
         if direction == 0:
             return Signal(SignalType.NONE, 0.0, "no HTF swing bias", bar_index)
 
-        # Gate 8: internal bias must confirm swing direction
-        if htf_result.internal_bias != direction:
+        # Gate 8: internal bias must confirm swing direction (skipped for scalp —
+        # scalp entries happen during pullbacks where internal bias is opposite)
+        if self._require_htf_internal_align and htf_result.internal_bias != direction:
             return Signal(SignalType.NONE, 0.0, "HTF internal bias mismatch", bar_index)
 
         # ── 3.5. Daily bias alignment gate ───────────────────────────────

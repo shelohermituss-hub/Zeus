@@ -108,7 +108,9 @@ def main() -> None:
     # ── 2. Build strategy ─────────────────────────────────────────────────────
     strategy = ScalpSMCStrategy(
         df_htf_1h=df_1h,
-        df_mtf_15m=df_15m,
+        df_mtf_15m=None,    # 15M MSS disabled — same conjunction problem as 1H MSS
+                            # on the swing strategy; 15M internal bias is always in
+                            # pullback when we want to enter, producing 0 setups.
         df_daily=df_1d,
         sl_pips=SL_PIPS,
         max_sl_pips=MAX_SL_PIPS,
@@ -117,7 +119,7 @@ def main() -> None:
         swing_length=20,
         internal_length=5,
         atr_period=100,
-        ltf_lookback=15,
+        ltf_lookback=30,    # wider window for 1M FVG detection (30 min of history)
         killzone_only=True,
         require_entry_fvg=True,
         require_choch_candle=False,
@@ -196,7 +198,7 @@ def main() -> None:
                           "killzone", "daily_bias", "zone_reentry_guard",
                           "partial_close_scalp", "daily_freq_gate"],
             "disabled":  ["weekly_bias", "choch_candle", "asian_sweep",
-                          "premium_discount", "1h_mss_on_4h_strategy"],
+                          "premium_discount", "15m_mss", "htf_internal_align"],
             "sl_pips":   SL_PIPS,
             "max_sl_pips": MAX_SL_PIPS,
         },
