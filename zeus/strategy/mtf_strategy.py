@@ -32,11 +32,14 @@ from zeus.strategy.base import Signal, SignalType, Strategy
 from zeus.strategy.confluence import PatternGrade, best_confluence
 from zeus.strategy.smc.indicator import SMCResult, analyze
 from zeus.strategy.smc.session import (
+    SessionRange,
     asian_range_swept,
+    detect_session_ranges,
     get_daily_bias,
     get_weekly_bias,
     is_in_killzone,
     killzone_name,
+    prev_session_liquidity_swept,
 )
 from zeus.strategy.smc.approach import compute_approach_quality
 from zeus.strategy.smc.order_block import get_active_order_blocks
@@ -98,6 +101,8 @@ class MTFSMCStrategy(Strategy):
         approach_max_body_atr:        float = 1.5,
         require_poc_zone_confluence:  bool  = False,
         poc_zone_tolerance_pct:       float = 0.005,
+        require_session_sweep:        bool  = False,
+        session_sweep_lookback:       int   = 30,
         max_daily_signals:            int  = 2,
         max_signals_per_session:      int  = 1,
     ) -> None:
@@ -132,7 +137,12 @@ class MTFSMCStrategy(Strategy):
         self._approach_max_body_atr       = approach_max_body_atr
         self._require_poc_zone_confluence = require_poc_zone_confluence
         self._poc_zone_tol                = poc_zone_tolerance_pct
+        self._require_session_sweep       = require_session_sweep
+        self._session_sweep_lookback      = session_sweep_lookback
         self._max_daily_signals           = max_daily_signals
+
+        # Lazy cache — populated on first generate_signal() call with the LTF df
+        self._session_ranges: list[SessionRange] | None = None
         self._max_signals_per_session     = max_signals_per_session
         self._min_htf_bars            = max(swing_length, internal_length) * 2
 
@@ -224,6 +234,26 @@ class MTFSMCStrategy(Strategy):
         if self._require_asian_sweep:
             if not asian_range_swept(df, bar_index, ltf_ts, direction):
                 return Signal(SignalType.NONE, 0.0, "Asian range not swept", bar_index)
+
+        # ── 3.8. Previous session liquidity sweep gate ────────────────────
+        # Within the last session_sweep_lookback bars, price must have swept
+        # the relevant extreme of the most recently completed session:
+        #   LONG  → bar low < prev session low  (sell-side liquidity taken)
+        #   SHORT → bar high > prev session high (buy-side liquidity taken)
+        # Pre-compute session ranges lazily on the first call.
+        if self._require_session_sweep:
+            if self._session_ranges is None:
+                self._session_ranges = detect_session_ranges(df)
+            swept, sweep_reason = prev_session_liquidity_swept(
+                self._session_ranges, df, bar_index, direction,
+                sweep_lookback=self._session_sweep_lookback,
+            )
+            if not swept:
+                return Signal(
+                    SignalType.NONE, 0.0,
+                    f"session liquidity not swept: {sweep_reason}",
+                    bar_index,
+                )
 
         # ── 4. Price inside active HTF zone ──────────────────────────────
         # Use LTF (1M) close price against HTF zones — this is the core of

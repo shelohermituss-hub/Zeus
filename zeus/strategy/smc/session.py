@@ -375,6 +375,68 @@ def asian_range_swept(
     return False
 
 
+def prev_session_liquidity_swept(
+    session_ranges: list[SessionRange],
+    df:             pd.DataFrame,
+    bar_index:      int,
+    direction:      int,
+    sweep_lookback: int = 30,
+) -> tuple[bool, str]:
+    """
+    Return (swept, reason) — True when the most recently completed session's
+    liquidity extreme was swept within the last *sweep_lookback* LTF bars.
+
+    Sweep logic (Smart Money Concepts):
+      LONG  — a bar's *low*  dips below the previous session LOW
+              (sell-side liquidity taken → institutions now push price up)
+      SHORT — a bar's *high* spikes above the previous session HIGH
+              (buy-side liquidity taken → institutions now push price down)
+
+    Only bars that occurred AFTER the previous session closed are considered,
+    so the sweep must be a deliberate hunt, not part of the session itself.
+
+    Args:
+        session_ranges: Pre-computed list from detect_session_ranges().
+        df:             LTF OHLCV DataFrame (same bar indexing).
+        bar_index:      Current bar (inclusive upper bound).
+        direction:      BULLISH (+1) or BEARISH (-1).
+        sweep_lookback: Max LTF bars to look back for the sweep.
+
+    Returns:
+        (True, descriptive reason) or (False, reason explaining the miss).
+    """
+    prev = last_session_range(session_ranges, bar_index)
+    if prev is None:
+        return False, "no completed session range available"
+
+    highs  = df["high"].to_numpy(dtype=float)
+    lows   = df["low"].to_numpy(dtype=float)
+
+    # Only scan bars AFTER the session closed AND within the lookback window
+    start = max(prev.formed_at, max(0, bar_index - sweep_lookback + 1))
+
+    for i in range(start, bar_index + 1):
+        if direction == BULLISH and lows[i] < prev.low:
+            return (
+                True,
+                f"sell-side sweep bar={i}: low {lows[i]:.2f} < "
+                f"{prev.session.name} low {prev.low:.2f}",
+            )
+        if direction == BEARISH and highs[i] > prev.high:
+            return (
+                True,
+                f"buy-side sweep bar={i}: high {highs[i]:.2f} > "
+                f"{prev.session.name} high {prev.high:.2f}",
+            )
+
+    return (
+        False,
+        f"no {('sell-side' if direction == BULLISH else 'buy-side')} sweep of "
+        f"{prev.session.name} [{prev.low:.2f}–{prev.high:.2f}] "
+        f"in last {sweep_lookback} bars",
+    )
+
+
 def get_weekly_bias(df_daily: pd.DataFrame, ltf_ts: pd.Timestamp) -> int:
     """
     Return the directional bias of the last fully closed weekly candle.
