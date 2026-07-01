@@ -96,6 +96,8 @@ class MTFSMCStrategy(Strategy):
         approach_lookback:            int   = 5,
         approach_max_momentum:        float = 0.6,
         approach_max_body_atr:        float = 1.5,
+        require_poc_zone_confluence:  bool  = False,
+        poc_zone_tolerance_pct:       float = 0.005,
         max_daily_signals:            int  = 2,
         max_signals_per_session:      int  = 1,
     ) -> None:
@@ -128,6 +130,8 @@ class MTFSMCStrategy(Strategy):
         self._approach_lookback           = approach_lookback
         self._approach_max_momentum       = approach_max_momentum
         self._approach_max_body_atr       = approach_max_body_atr
+        self._require_poc_zone_confluence = require_poc_zone_confluence
+        self._poc_zone_tol                = poc_zone_tolerance_pct
         self._max_daily_signals           = max_daily_signals
         self._max_signals_per_session     = max_signals_per_session
         self._min_htf_bars            = max(swing_length, internal_length) * 2
@@ -224,9 +228,11 @@ class MTFSMCStrategy(Strategy):
         # ── 4. Price inside active HTF zone ──────────────────────────────
         # Use LTF (1M) close price against HTF zones — this is the core of
         # sniper entry: price has retraced into an HTF zone after the HTF bar closed
-        zone_type = self._in_htf_zone(htf_result, htf_bar_idx, close, direction)
-        if zone_type is None:
+        zone_info = self._in_htf_zone(htf_result, htf_bar_idx, close, direction)
+        if zone_info is None:
             return Signal(SignalType.NONE, 0.0, "price outside HTF zone", bar_index)
+
+        zone_type, zone_low, zone_high = zone_info
 
         # Zone whitelist filter — skip early before expensive confluence scoring
         if self._allowed_zones is not None and zone_type not in self._allowed_zones:
@@ -244,6 +250,22 @@ class MTFSMCStrategy(Strategy):
             )
             if not is_clean:
                 return Signal(SignalType.NONE, 0.0, f"dirty approach: {reason}", bar_index)
+
+        # ── 4.3. POC zone confluence gate ────────────────────────────────
+        # The HTF volume POC must lie within (or very near) the active zone.
+        # A zone that sits at high volume = institutions have orders there and
+        # are likely to defend it. A zone with no volume = weaker setup.
+        if self._require_poc_zone_confluence:
+            vp = htf_result.volume_profile
+            if vp is not None:
+                tol_price = vp.poc * self._poc_zone_tol
+                poc_in_zone = (zone_low - tol_price) <= vp.poc <= (zone_high + tol_price)
+                if not poc_in_zone:
+                    return Signal(
+                        SignalType.NONE, 0.0,
+                        f"POC {vp.poc:.2f} outside {zone_type} [{zone_low:.2f}–{zone_high:.2f}]",
+                        bar_index,
+                    )
 
         # ── 4.5. Premium / Discount filter (Rec 12) ──────────────────────
         # Price must be below the HTF 50 % midpoint for longs (discount zone)
@@ -396,10 +418,13 @@ class MTFSMCStrategy(Strategy):
         bar_idx:   int,
         price:     float,
         direction: int,
-    ) -> str | None:
+    ) -> tuple[str, float, float] | None:
         """
-        Return the zone type ("OB", "FVG", "OTE") if price is inside an active
+        Return (zone_type, zone_low, zone_high) if price is inside an active
         HTF zone aligned with *direction*, else None.
+
+        Zone bounds are the raw boundaries (without tolerance expansion) so
+        downstream POC-overlap checks can compare against the actual zone.
         """
         tol = self._zone_tol
 
@@ -410,23 +435,19 @@ class MTFSMCStrategy(Strategy):
         )
         for ob in all_obs:
             if ob.direction == direction:
-                lo = ob.low  * (1 - tol)
-                hi = ob.high * (1 + tol)
-                if lo <= price <= hi:
-                    return "OB"
+                if ob.low * (1 - tol) <= price <= ob.high * (1 + tol):
+                    return "OB", ob.low, ob.high
 
         # Fair Value Gaps
         for fvg in get_active_fvgs(result.fvgs, bar_idx):
             if fvg.direction == direction:
-                lo = fvg.bottom * (1 - tol)
-                hi = fvg.top    * (1 + tol)
-                if lo <= price <= hi:
-                    return "FVG"
+                if fvg.bottom * (1 - tol) <= price <= fvg.top * (1 + tol):
+                    return "FVG", fvg.bottom, fvg.top
 
         # OTE Fibonacci zone (61.8–78.6 %)
         fib_zone = get_latest_fib_zone(result.fib_zones, bar_idx, direction)
         if fib_zone is not None and fib_zone.is_in_ote(price):
-            return "OTE"
+            return "OTE", fib_zone.ote_bottom, fib_zone.ote_top
 
         return None
 

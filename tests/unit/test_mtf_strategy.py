@@ -270,7 +270,7 @@ class TestDailyBiasGateMTF:
         s      = self._make_strategy(df_daily=None)
         df_ltf = self._ltf_with_ts()
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf_result(BULLISH)), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None  # Enough to stop at confluence step
@@ -284,7 +284,7 @@ class TestDailyBiasGateMTF:
         s        = self._make_strategy(df_daily=df_daily)
         df_ltf   = self._ltf_with_ts("2024-01-02")
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf_result(BULLISH)), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
@@ -317,7 +317,7 @@ class TestDailyBiasGateMTF:
         s        = self._make_strategy(df_daily=df_daily)
         df_ltf   = self._ltf_with_ts("2024-01-02")
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf_result(BULLISH)), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
@@ -437,7 +437,7 @@ class TestMTFMSSGate:
         )
         df_ltf = self._ltf_with_ts()
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
@@ -454,7 +454,7 @@ class TestMTFMSSGate:
         df_ltf = self._ltf_with_ts()
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)), \
              patch.object(s, "_mtf_mss_confirmed", return_value=True), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
@@ -662,7 +662,7 @@ class TestEntryFVGTrigger:
         # Patch _last_htf_bar so the pipeline passes the HTF-data guard
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=mock_htf), \
-             patch.object(s, "_in_htf_zone", return_value="FVG"), \
+             patch.object(s, "_in_htf_zone", return_value=("FVG", 1998.0, 2002.0)), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc, \
              patch.object(s, "_ltf_entry_confirmed", return_value=False) as mock_ltf:
             mock_cs = MagicMock()
@@ -743,7 +743,7 @@ class TestAsianSweepGate:
         )
         bar = len(df_ltf) - 1
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BEARISH)), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
@@ -761,7 +761,7 @@ class TestAsianSweepGate:
         df_ltf = self._make_ltf_with_asian(post_highs=post_h, post_lows=post_l)
         bar = len(df_ltf) - 1
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BULLISH)), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
@@ -792,7 +792,7 @@ class TestAsianSweepGate:
         df_ltf = self._make_ltf_with_asian(post_highs=post_h, post_lows=post_l)
         bar = len(df_ltf) - 1
         with patch.object(s, "_htf_analysis", return_value=self._mock_htf(BEARISH)), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_bc.return_value = None
@@ -890,7 +890,7 @@ class TestDailyFrequencyLimit:
         return (
             patch.object(s, "_last_htf_bar", return_value=150),
             patch.object(s, "_htf_analysis", return_value=self._mock_htf(direction)),
-            patch.object(s, "_in_htf_zone", return_value="OB"),
+            patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)),
             patch.object(s, "_ltf_entry_confirmed", return_value=True),
             patch("zeus.strategy.mtf_strategy.best_confluence", return_value=mock_cs),
         )
@@ -902,7 +902,7 @@ class TestDailyFrequencyLimit:
         df = self._ltf_at(hour=9)   # London KZ
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -923,7 +923,7 @@ class TestDailyFrequencyLimit:
         df = self._ltf_at(date="2024-01-15", hour=9)   # London KZ
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -944,7 +944,7 @@ class TestDailyFrequencyLimit:
         df = self._ltf_at(date="2024-01-15", hour=13)   # NY KZ (12-15 UTC)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -967,7 +967,7 @@ class TestDailyFrequencyLimit:
         df = self._ltf_at(date="2024-01-15", hour=13)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -990,7 +990,7 @@ class TestDailyFrequencyLimit:
         df = self._ltf_at(date="2024-01-15", hour=9)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -1012,7 +1012,7 @@ class TestDailyFrequencyLimit:
         df = self._ltf_at(date="2024-01-15", hour=13)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -1032,7 +1032,7 @@ class TestDailyFrequencyLimit:
         assert len(s._signal_log) == 0
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -1064,7 +1064,7 @@ class TestDailyFrequencyLimit:
         df = self._ltf_at(date="2024-01-15", hour=9)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -1097,7 +1097,7 @@ class TestZoneReEntryGuard(TestDailyFrequencyLimit):
         df = self._ltf_at(date="2024-01-15", hour=13)       # NY KZ
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -1119,7 +1119,7 @@ class TestZoneReEntryGuard(TestDailyFrequencyLimit):
         df = self._ltf_at(date="2024-01-15", hour=13)       # NY KZ
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="FVG"), \
+             patch.object(s, "_in_htf_zone", return_value=("FVG", 1998.0, 2002.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -1140,7 +1140,7 @@ class TestZoneReEntryGuard(TestDailyFrequencyLimit):
         df = self._ltf_at(date="2024-01-15", hour=13)
         with patch.object(s, "_last_htf_bar", return_value=155), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -1161,7 +1161,7 @@ class TestZoneReEntryGuard(TestDailyFrequencyLimit):
         df = self._ltf_at(date="2024-01-15", hour=13)
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=self._mock_htf()), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence") as mock_bc:
             mock_cs = MagicMock()
@@ -1225,7 +1225,7 @@ class TestCHoCHCandleGate:
         mock_htf.internal_bias = direction
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=mock_htf), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence", return_value=mock_cs):
             return s.generate_signal(df, bar_index=len(df) - 1)
@@ -1340,7 +1340,7 @@ class TestPremiumDiscountFilter:
         mock_htf.fib_zones     = fib_zones or []
         with patch.object(s, "_last_htf_bar", return_value=150), \
              patch.object(s, "_htf_analysis", return_value=mock_htf), \
-             patch.object(s, "_in_htf_zone", return_value="OB"), \
+             patch.object(s, "_in_htf_zone", return_value=("OB", 1990.0, 2010.0)), \
              patch.object(s, "_ltf_entry_confirmed", return_value=True), \
              patch("zeus.strategy.mtf_strategy.best_confluence", return_value=mock_cs):
             return s.generate_signal(df, bar_index=len(df) - 1)
