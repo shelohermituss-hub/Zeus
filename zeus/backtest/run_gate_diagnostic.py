@@ -73,7 +73,7 @@ def _gate_key(reason: str) -> str:
 def _make_strategy(tfs: dict) -> ScalpSMCStrategy:
     return ScalpSMCStrategy(
         df_htf_1h=tfs["1h"],
-        df_mtf_15m=tfs["15min"],
+        df_mtf_15m=None,          # NO_MSS — gate désactivé
         df_daily=tfs["1d"],
         sl_pips=20.0,
         max_sl_pips=30.0,

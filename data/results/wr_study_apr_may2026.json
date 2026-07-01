@@ -1,0 +1,268 @@
+{
+  "meta": {
+    "start": "2026-04-01",
+    "end": "2026-05-31",
+    "trading_days": 44
+  },
+  "variants": [
+    {
+      "id": "BASE",
+      "name": "NO_MSS r\u00e9f\u00e9rence",
+      "config": {
+        "id": "BASE",
+        "name": "NO_MSS r\u00e9f\u00e9rence",
+        "score": 3.0,
+        "zone_tol": 0.003,
+        "approach": true,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11131.26,
+        "net_pnl": 1111.84,
+        "total_return_pct": 11.31,
+        "n_trades": 8,
+        "win_rate": 50.0,
+        "avg_win": 290.15,
+        "avg_loss": -2.46,
+        "profit_factor": 118.0948,
+        "max_drawdown_pct": 2.0,
+        "sharpe_ratio": 0.0085,
+        "total_fees": 38.92
+      },
+      "monthly_pnl": {
+        "2026-04": 826.5883627646197,
+        "2026-05": 324.1713109589189
+      },
+      "sessions": {
+        "hors KZ": {
+          "n": 8,
+          "wins": 4,
+          "pnl": 1150.7596737235385
+        }
+      }
+    },
+    {
+      "id": "SCORE4",
+      "name": "score \u2265 4",
+      "config": {
+        "id": "SCORE4",
+        "name": "score \u2265 4",
+        "score": 4.0,
+        "zone_tol": 0.003,
+        "approach": true,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10627.14,
+        "net_pnl": 617.52,
+        "total_return_pct": 6.27,
+        "n_trades": 4,
+        "win_rate": 50.0,
+        "avg_win": 320.87,
+        "avg_loss": -2.46,
+        "profit_factor": 130.4277,
+        "max_drawdown_pct": 1.79,
+        "sharpe_ratio": 0.0068,
+        "total_fees": 19.31
+      },
+      "monthly_pnl": {
+        "2026-04": 641.7477083882461,
+        "2026-05": -4.920332078255392
+      },
+      "sessions": {
+        "hors KZ": {
+          "n": 4,
+          "wins": 2,
+          "pnl": 636.8273763099908
+        }
+      }
+    },
+    {
+      "id": "SCORE5",
+      "name": "score \u2265 5",
+      "config": {
+        "id": "SCORE5",
+        "name": "score \u2265 5",
+        "score": 5.0,
+        "zone_tol": 0.003,
+        "approach": true,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9995.26,
+        "net_pnl": -7.1,
+        "total_return_pct": -0.05,
+        "n_trades": 1,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -2.37,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 1.04,
+        "sharpe_ratio": -0.0001,
+        "total_fees": 4.74
+      },
+      "monthly_pnl": {
+        "2026-04": -2.3678388375
+      },
+      "sessions": {
+        "hors KZ": {
+          "n": 1,
+          "wins": 0,
+          "pnl": -2.3678388375
+        }
+      }
+    },
+    {
+      "id": "ZONE_WIDE",
+      "name": "zone tol 0.6%",
+      "config": {
+        "id": "ZONE_WIDE",
+        "name": "zone tol 0.6%",
+        "score": 3.0,
+        "zone_tol": 0.006,
+        "approach": true,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11131.26,
+        "net_pnl": 1111.84,
+        "total_return_pct": 11.31,
+        "n_trades": 8,
+        "win_rate": 50.0,
+        "avg_win": 290.15,
+        "avg_loss": -2.46,
+        "profit_factor": 118.0948,
+        "max_drawdown_pct": 2.0,
+        "sharpe_ratio": 0.0085,
+        "total_fees": 38.92
+      },
+      "monthly_pnl": {
+        "2026-04": 826.5883627646197,
+        "2026-05": 324.1713109589189
+      },
+      "sessions": {
+        "hors KZ": {
+          "n": 8,
+          "wins": 4,
+          "pnl": 1150.7596737235385
+        }
+      }
+    },
+    {
+      "id": "NO_APPROACH",
+      "name": "sans approach gate",
+      "config": {
+        "id": "NO_APPROACH",
+        "name": "sans approach gate",
+        "score": 3.0,
+        "zone_tol": 0.003,
+        "approach": false,
+        "sweep_lb": 3
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11131.26,
+        "net_pnl": 1111.84,
+        "total_return_pct": 11.31,
+        "n_trades": 8,
+        "win_rate": 50.0,
+        "avg_win": 290.15,
+        "avg_loss": -2.46,
+        "profit_factor": 118.0947,
+        "max_drawdown_pct": 2.02,
+        "sharpe_ratio": 0.0085,
+        "total_fees": 38.92
+      },
+      "monthly_pnl": {
+        "2026-04": 826.5882331579628,
+        "2026-05": 324.1713392062832
+      },
+      "sessions": {
+        "hors KZ": {
+          "n": 8,
+          "wins": 4,
+          "pnl": 1150.759572364246
+        }
+      }
+    },
+    {
+      "id": "SWEEP10",
+      "name": "sweep lookback 10",
+      "config": {
+        "id": "SWEEP10",
+        "name": "sweep lookback 10",
+        "score": 3.0,
+        "zone_tol": 0.003,
+        "approach": true,
+        "sweep_lb": 10
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11126.11,
+        "net_pnl": 1104.38,
+        "total_return_pct": 11.26,
+        "n_trades": 9,
+        "win_rate": 44.4,
+        "avg_win": 290.01,
+        "avg_loss": -2.43,
+        "profit_factor": 95.5641,
+        "max_drawdown_pct": 2.0,
+        "sharpe_ratio": 0.0083,
+        "total_fees": 43.53
+      },
+      "monthly_pnl": {
+        "2026-04": 823.8895566353485,
+        "2026-05": 324.0211589827695
+      },
+      "sessions": {
+        "hors KZ": {
+          "n": 9,
+          "wins": 4,
+          "pnl": 1147.910715618118
+        }
+      }
+    },
+    {
+      "id": "ALL_ZONES",
+      "name": "toutes zones (OB+OTE+FVG\u2026)",
+      "config": {
+        "id": "ALL_ZONES",
+        "name": "toutes zones (OB+OTE+FVG\u2026)",
+        "score": 3.0,
+        "zone_tol": 0.003,
+        "approach": true,
+        "sweep_lb": 3,
+        "allowed_zones": null
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 10955.38,
+        "net_pnl": 916.39,
+        "total_return_pct": 9.55,
+        "n_trades": 16,
+        "win_rate": 31.2,
+        "avg_win": 268.78,
+        "avg_loss": -31.76,
+        "profit_factor": 3.8466,
+        "max_drawdown_pct": 3.55,
+        "sharpe_ratio": 0.0058,
+        "total_fees": 78.12
+      },
+      "monthly_pnl": {
+        "2026-04": 821.1367183031052,
+        "2026-05": 173.3736074899227
+      },
+      "sessions": {
+        "hors KZ": {
+          "n": 16,
+          "wins": 5,
+          "pnl": 994.510325793028
+        }
+      }
+    }
+  ]
+}
