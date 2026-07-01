@@ -80,6 +80,7 @@ class ScalpSMCStrategy(MTFSMCStrategy):
         require_choch_candle:    bool  = False,
         max_daily_signals:       int   = 5,
         max_signals_per_session: int   = 2,
+        allowed_zones:           list[str] | None = None,
     ) -> None:
         super().__init__(
             df_htf=df_htf_1h,
@@ -106,6 +107,7 @@ class ScalpSMCStrategy(MTFSMCStrategy):
             require_htf_internal_align=False,
             max_daily_signals=max_daily_signals,
             max_signals_per_session=max_signals_per_session,
+            allowed_zones=allowed_zones,
         )
 
     def generate_signal(self, df: pd.DataFrame, bar_index: int) -> Signal:
