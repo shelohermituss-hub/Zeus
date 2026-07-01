@@ -1,0 +1,38 @@
+{
+  "meta": {
+    "symbol": "XAUUSD",
+    "start": "2026-01-01",
+    "end": "2026-01-31",
+    "timeframe": "5M \u2192 4-TF cascade",
+    "features": [
+      "killzone",
+      "daily_bias",
+      "weekly_bias",
+      "htf_zones",
+      "5m_fvg",
+      "partial_close_mtf_smc",
+      "zone_reentry_guard",
+      "choch_candle"
+    ],
+    "disabled": [
+      "1h_mss",
+      "asian_sweep",
+      "premium_discount"
+    ]
+  },
+  "summary": {
+    "initial_balance": 10000.0,
+    "final_equity": 10000.0,
+    "net_pnl": 0.0,
+    "total_return_pct": 0.0,
+    "n_trades": 0,
+    "win_rate": 0.0,
+    "avg_win": 0.0,
+    "avg_loss": 0.0,
+    "profit_factor": 0.0,
+    "max_drawdown_pct": 0.0,
+    "sharpe_ratio": 0.0,
+    "total_fees": 0.0
+  },
+  "trades": []
+}
