@@ -1,0 +1,178 @@
+{
+  "meta": {
+    "symbol": "XAUUSD",
+    "start": "2026-01-01",
+    "end": "2026-06-30",
+    "reference": "V2A_L3 (OB+OTE, score\u22653, approach+sweep lb=3)",
+    "filters_tested": [
+      "min_htf_score=5",
+      "sl_pips=20",
+      "require_ote",
+      "require_daily_bias"
+    ]
+  },
+  "variants": [
+    {
+      "id": "REF",
+      "name": "V2A_L3 reference",
+      "config": {
+        "id": "REF",
+        "name": "V2A_L3 reference",
+        "score": 3.0,
+        "sl": 6.0,
+        "max_sl": 10.0,
+        "ote": false,
+        "daily_bias": false
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 11528.43,
+        "net_pnl": 1528.43,
+        "total_return_pct": 15.28,
+        "n_trades": 32,
+        "win_rate": 40.6,
+        "avg_win": 243.21,
+        "avg_loss": -102.09,
+        "profit_factor": 1.9358,
+        "max_drawdown_pct": 7.29,
+        "sharpe_ratio": 0.0037,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V3_S",
+      "name": "score\u22655 only",
+      "config": {
+        "id": "V3_S",
+        "name": "score\u22655 only",
+        "score": 5.0,
+        "sl": 6.0,
+        "max_sl": 10.0,
+        "ote": false,
+        "daily_bias": false
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9702.99,
+        "net_pnl": -297.01,
+        "total_return_pct": -2.97,
+        "n_trades": 3,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -99.0,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 2.97,
+        "sharpe_ratio": -0.0055,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V3_SL",
+      "name": "score\u22655 + SL=20/30",
+      "config": {
+        "id": "V3_SL",
+        "name": "score\u22655 + SL=20/30",
+        "score": 5.0,
+        "sl": 20.0,
+        "max_sl": 30.0,
+        "ote": false,
+        "daily_bias": false
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9948.01,
+        "net_pnl": -51.98,
+        "total_return_pct": -0.52,
+        "n_trades": 3,
+        "win_rate": 33.3,
+        "avg_win": 147.02,
+        "avg_loss": -99.5,
+        "profit_factor": 0.7388,
+        "max_drawdown_pct": 3.07,
+        "sharpe_ratio": -0.0004,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V3_OTE",
+      "name": "score\u22655 + SL + OTE gate",
+      "config": {
+        "id": "V3_OTE",
+        "name": "score\u22655 + SL + OTE gate",
+        "score": 5.0,
+        "sl": 20.0,
+        "max_sl": 30.0,
+        "ote": true,
+        "daily_bias": false
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9900.0,
+        "net_pnl": -100.0,
+        "total_return_pct": -1.0,
+        "n_trades": 1,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -100.0,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 1.06,
+        "sharpe_ratio": -0.0032,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V3_DB",
+      "name": "score\u22655 + SL + daily bias",
+      "config": {
+        "id": "V3_DB",
+        "name": "score\u22655 + SL + daily bias",
+        "score": 5.0,
+        "sl": 20.0,
+        "max_sl": 30.0,
+        "ote": false,
+        "daily_bias": true
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9948.01,
+        "net_pnl": -51.98,
+        "total_return_pct": -0.52,
+        "n_trades": 3,
+        "win_rate": 33.3,
+        "avg_win": 147.02,
+        "avg_loss": -99.5,
+        "profit_factor": 0.7388,
+        "max_drawdown_pct": 3.07,
+        "sharpe_ratio": -0.0004,
+        "total_fees": 0.0
+      }
+    },
+    {
+      "id": "V3_FULL",
+      "name": "All 5 corrections",
+      "config": {
+        "id": "V3_FULL",
+        "name": "All 5 corrections",
+        "score": 5.0,
+        "sl": 20.0,
+        "max_sl": 30.0,
+        "ote": true,
+        "daily_bias": true
+      },
+      "summary": {
+        "initial_balance": 10000.0,
+        "final_equity": 9900.0,
+        "net_pnl": -100.0,
+        "total_return_pct": -1.0,
+        "n_trades": 1,
+        "win_rate": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": -100.0,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 1.06,
+        "sharpe_ratio": -0.0032,
+        "total_fees": 0.0
+      }
+    }
+  ]
+}
