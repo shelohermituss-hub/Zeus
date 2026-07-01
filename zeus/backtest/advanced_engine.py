@@ -94,6 +94,7 @@ class AdvancedBacktestEngine:
             bar_high  = float(df["high"].iloc[bar_index]) if "high" in df.columns else float(df["close"].iloc[bar_index])
             bar_low   = float(df["low"].iloc[bar_index])  if "low"  in df.columns else float(df["close"].iloc[bar_index])
             close     = float(df["close"].iloc[bar_index])
+            bar_ts    = df.index[bar_index].to_pydatetime()
 
             # ── 1. Process open positions (intrabar exits) ────────────────
             to_remove: list[str] = []
@@ -107,7 +108,7 @@ class AdvancedBacktestEngine:
                         balance  += total_pnl
                         trade.realized_pnl = total_pnl
                         trade.status       = TradeStatus.CLOSED_SL if event_type == "sl" else TradeStatus.CLOSED_MAN
-                        trade.closed_at    = datetime.now(tz=timezone.utc)
+                        trade.closed_at    = bar_ts
                         to_remove.append(tid)
                         logger.debug(
                             "Trade closed",
@@ -120,7 +121,7 @@ class AdvancedBacktestEngine:
                         balance  += total_pnl
                         trade.realized_pnl = total_pnl
                         trade.status       = TradeStatus.CLOSED_TP
-                        trade.closed_at    = datetime.now(tz=timezone.utc)
+                        trade.closed_at    = bar_ts
                         to_remove.append(tid)
                     # else: intermediate partial → balance update deferred to close
 
@@ -163,6 +164,7 @@ class AdvancedBacktestEngine:
         # ── Force-close remaining positions at last bar ───────────────────
         if len(df) > 0:
             last_close = float(df["close"].iloc[-1])
+            last_ts    = df.index[-1].to_pydatetime()
             for tid, (state, trade) in open_positions.items():
                 if state.is_long:
                     pnl = (last_close - state.entry_price) * state.original_qty
@@ -176,7 +178,7 @@ class AdvancedBacktestEngine:
                 balance += total_pnl
                 trade.realized_pnl = total_pnl
                 trade.status       = TradeStatus.CLOSED_MAN
-                trade.closed_at    = datetime.now(tz=timezone.utc)
+                trade.closed_at    = last_ts
                 trades.append(trade) if trade not in trades else None
 
         logger.info(
