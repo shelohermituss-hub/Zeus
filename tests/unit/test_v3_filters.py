@@ -240,3 +240,81 @@ class TestRequireDailyBiasGate:
     def test_scalp_daily_bias_enabled_by_default(self):
         s = _make_scalp()
         assert s._require_daily_bias is True
+
+
+# ── Tests: require_entry_pattern gate (gate 6.4) ─────────────────────────────
+
+def _df_with_hammer(price: float = 2000.0) -> pd.DataFrame:
+    """49-bar flat df followed by a hammer candle at bar_index=49.
+    Hammer: lower_wick=7, range=10 → 70% ≥ 60%; close in upper half."""
+    flat = _flat_df(49, price=price, freq="1min")
+    hammer = pd.DataFrame(
+        {
+            "open":   [price + 2],
+            "high":   [price + 3],
+            "low":    [price - 7],
+            "close":  [price + 2],
+            "volume": [1000.0],
+        },
+        index=[flat.index[-1] + pd.Timedelta(minutes=1)],
+    )
+    return pd.concat([flat, hammer])
+
+
+def _patched_signal_df(s: MTFSMCStrategy, df: pd.DataFrame, price: float = 2000.0):
+    """Same as _patched_signal but uses a caller-supplied LTF DataFrame."""
+    from zeus.strategy.confluence import ConfluenceScore, FactorResult
+
+    cs = ConfluenceScore(
+        direction=BULLISH, price=price, bar_index=5,
+        factors=[FactorResult(i + 1, f"F{i+1}", True) for i in range(10)],
+    )
+    htf_result = _fake_htf_result(BULLISH)
+
+    with (
+        patch.object(s, "_last_htf_bar", return_value=100),
+        patch.object(s, "_htf_analysis", return_value=htf_result),
+        patch.object(s, "_mtf_mss_confirmed", return_value=True),
+        patch.object(s, "_in_htf_zone", return_value=("OB", price - 15.0, price + 5.0)),
+        patch.object(s, "_ltf_entry_confirmed", return_value=True),
+        patch("zeus.strategy.mtf_strategy.best_confluence", return_value=cs),
+        patch("zeus.strategy.mtf_strategy.get_daily_bias", return_value=BULLISH),
+        patch("zeus.strategy.mtf_strategy.ltf_liquidity_sweep", return_value=(True, "sweep ok")),
+    ):
+        return s.generate_signal(df, bar_index=49)
+
+
+class TestRequireEntryPatternGate:
+
+    def test_gate_off_doji_not_rejected(self):
+        """With require_entry_pattern=False, a zero-range bar is not rejected by the gate."""
+        s = _make_mtf(require_entry_pattern=False, killzone_only=False)
+        df = _flat_df(50, freq="1min")
+        sig = _patched_signal_df(s, df)
+        assert "entry candle pattern" not in sig.reason
+
+    def test_gate_on_doji_rejected(self):
+        """With require_entry_pattern=True, a zero-range doji is rejected by gate 6.4."""
+        s = _make_mtf(require_entry_pattern=True, killzone_only=False)
+        df = _flat_df(50, freq="1min")
+        sig = _patched_signal_df(s, df)
+        assert "entry candle pattern" in sig.reason
+
+    def test_gate_on_hammer_passes(self):
+        """With require_entry_pattern=True, a valid hammer passes gate 6.4."""
+        s = _make_mtf(require_entry_pattern=True, killzone_only=False)
+        df = _df_with_hammer()
+        sig = _patched_signal_df(s, df)
+        assert "entry candle pattern" not in sig.reason
+
+    def test_gate_disabled_by_default_mtf(self):
+        s = _make_mtf()
+        assert s._require_entry_pattern is False
+
+    def test_gate_disabled_by_default_scalp(self):
+        s = _make_scalp()
+        assert s._require_entry_pattern is False
+
+    def test_custom_wick_ratio_forwarded(self):
+        s = _make_mtf(require_entry_pattern=True, min_wick_ratio=0.80)
+        assert s._min_wick_ratio == pytest.approx(0.80)

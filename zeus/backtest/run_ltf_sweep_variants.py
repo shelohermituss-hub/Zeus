@@ -110,6 +110,8 @@ def _make_strategy(
         require_session_sweep=False,
         require_ltf_sweep=v["ltf_sweep"],
         ltf_sweep_lookback=v["ltf_lookback"],
+        require_ote=False,
+        require_daily_bias=False,
         max_daily_signals=5,
         max_signals_per_session=2,
     )

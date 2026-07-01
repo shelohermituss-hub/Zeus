@@ -123,6 +123,10 @@ def main() -> None:
         killzone_only=True,
         require_entry_fvg=True,
         require_choch_candle=False,
+        require_ote=False,
+        require_daily_bias=False,
+        require_clean_approach=False,
+        require_ltf_sweep=False,
         max_daily_signals=5,
         max_signals_per_session=2,
     )

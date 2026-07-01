@@ -94,7 +94,7 @@ def _make_engine(v: dict, strategy: ScalpSMCStrategy) -> AdvancedBacktestEngine:
         min_rr=MIN_RR,
         max_position_pct=RISK_PCT,
         max_open_positions=1,
-        fee_pct=0.0,
+        fee_pct=0.0001,
         slippage_pct=SLIPPAGE_PCT,
         partial_close=_partial_close(v),
     )

@@ -199,29 +199,14 @@ class TestEdgeCases:
         assert "unknown" in reason
 
     def test_custom_wick_ratio_more_lenient(self):
-        # lower wick=4, range=10 → 40%; rejected at 60% but accepted at 35%
-        # prev bar: big body that current bar cannot engulf
-        df = pd.DataFrame(
-            {
-                "open":  [2988.0, 2995.0],  # prev: big bearish below
-                "high":  [2990.0, 3000.0],
-                "low":   [2982.0, 2990.0],
-                "close": [2982.0, 2998.0],
-                "volume": [1000.0, 1000.0],
-            },
-            index=pd.date_range("2026-01-06 08:00", periods=2, freq="1min", tz="UTC"),
-        )
-        # lower_wick = min(2995, 2998) - 2990 = 5, range = 10 → 50%
-        # Actually recalculate: lower_wick = body_bottom - low = 2995 - 2990 = 5 → 50%
-        # Let me use a bar where wick is exactly 40%: range=10, need lower_wick=4
-        # o=2995, h=3000, l=2990, c=2998: lower_wick = 2995 - 2990 = 5 → 50%... still 50%
-        # Use o=2996, h=3000, l=2990, c=2998: lower_wick = 2996-2990=6 → 60%...
-        # Need < 60% but > 35% for "accepted at 35%": use lower_wick=4, so l=2992 if body_bottom=2996
+        # Bar: o=2996, h=3000, l=2992, c=2998
+        # lower_wick = 2996 - 2992 = 4, range = 8 → 50% — below 60%, above 35%
+        # prev bar has a big bearish body so the current bar cannot accidentally engulf it
         df = pd.DataFrame(
             {
                 "open":  [2988.0, 2996.0],
                 "high":  [2990.0, 3000.0],
-                "low":   [2982.0, 2992.0],  # lower_wick = 2996-2992 = 4, range=8 → 50%
+                "low":   [2982.0, 2992.0],
                 "close": [2982.0, 2998.0],
                 "volume": [1000.0, 1000.0],
             },
@@ -233,22 +218,10 @@ class TestEdgeCases:
         assert ok_loose
 
     def test_custom_wick_ratio_stricter(self):
-        # lower wick=7, range=10 → 70%; accepted at 60% but rejected at 80%
-        # prev bar: big body so current bar cannot accidentally engulf it
-        df = pd.DataFrame(
-            {
-                "open":  [2988.0, 2998.0],  # prev: big bearish body, cannot be engulfed
-                "high":  [2990.0, 3000.0],
-                "low":   [2982.0, 2990.0],
-                "close": [2982.0, 2998.0],
-                "volume": [1000.0, 1000.0],
-            },
-            index=pd.date_range("2026-01-06 08:00", periods=2, freq="1min", tz="UTC"),
-        )
-        # lower_wick = min(2998, 2998) - 2990 = 8, range = 10 → 80%
-        # accepted at 60% and 80% thresholds...  need exactly 70%
-        # lower_wick = 7, range=10: body_bottom=2990+7=2997, so l=2990, body_bottom=2997
-        # o=2997, h=3000, l=2990, c=2998: lower_wick=min(2997,2998)-2990=2997-2990=7, range=10 → 70%
+        # Bar: o=2997, h=3000, l=2990, c=2998
+        # lower_wick = 2997 - 2990 = 7, range = 10 → 70%
+        # Accepted at 60% threshold, rejected at 80% threshold
+        # prev bar has a big bearish body so the current bar cannot accidentally engulf it
         df = pd.DataFrame(
             {
                 "open":  [2988.0, 2997.0],
