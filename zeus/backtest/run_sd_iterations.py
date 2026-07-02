@@ -41,7 +41,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -91,6 +91,9 @@ class VariantConfig:
     max_monthly_losses:  int   = 0   # 0 = unlimited
     use_be:              bool  = False  # break-even at +1R
     first_signal_per_zone: bool = False  # one signal per zone ever
+    # Asymmetric zone score thresholds (None → uses min_zone_score)
+    min_zone_score_long:  Optional[float] = None
+    min_zone_score_short: Optional[float] = None
 
 
 # ── Wide Wyckoff base config (reused across rounds) ───────────────────────────
@@ -165,6 +168,8 @@ def _build_strategy(cfg: VariantConfig) -> SDStrategy:
         use_adx_filter         = cfg.use_adx_filter,
         adx_min                = cfg.adx_min,
         first_signal_per_zone  = cfg.first_signal_per_zone,
+        min_zone_score_long    = cfg.min_zone_score_long,
+        min_zone_score_short   = cfg.min_zone_score_short,
     )
 
 

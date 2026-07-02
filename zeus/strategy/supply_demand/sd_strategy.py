@@ -135,6 +135,12 @@ class SDStrategy:
     use_adx_filter       : when True, only emit signals when M15 ADX ≥ adx_min
     adx_min              : minimum ADX value to trade (default 20.0)
     adx_period           : ADX smoothing period in M15 bars (default 14)
+    min_zone_score_long  : override min_zone_score for demand (long) signals only;
+                           None → uses min_zone_score (default None)
+    min_zone_score_short : override min_zone_score for supply (short) signals only;
+                           None → uses min_zone_score (default None)
+    max_daily_losses     : stop emitting signals for the rest of a calendar day once
+                           this many losses have been incurred that day; 0 = unlimited
     """
 
     def __init__(
@@ -157,6 +163,8 @@ class SDStrategy:
         adx_min:             float = 20.0,
         adx_period:          int   = 14,
         first_signal_per_zone: bool = False,
+        min_zone_score_long:  Optional[float] = None,
+        min_zone_score_short: Optional[float] = None,
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -176,6 +184,8 @@ class SDStrategy:
         self.adx_min                 = adx_min
         self.adx_period              = adx_period
         self.first_signal_per_zone   = first_signal_per_zone
+        self.min_zone_score_long     = min_zone_score_long  if min_zone_score_long  is not None else min_zone_score
+        self.min_zone_score_short    = min_zone_score_short if min_zone_score_short is not None else min_zone_score
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -271,7 +281,9 @@ class SDStrategy:
 
                 if zone.is_mitigated:
                     continue
-                if zone.score.total < self.min_zone_score:
+                # Asymmetric zone score: demand and supply can have different floors
+                _min_zsc = self.min_zone_score_long if zone.side == PivotSide.DEMAND else self.min_zone_score_short
+                if zone.score.total < _min_zsc:
                     continue
                 if not zone.price_in_zone(float(bar["low"]), float(bar["high"])):
                     continue
