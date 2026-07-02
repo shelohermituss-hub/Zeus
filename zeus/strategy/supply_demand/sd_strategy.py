@@ -415,7 +415,8 @@ class SDStrategy:
             _rsi_alpha = 1.0 / self.rsi_period
             _g_ema   = pd.Series(gains).ewm(alpha=_rsi_alpha, adjust=False).mean().to_numpy()
             _l_ema   = pd.Series(losses).ewm(alpha=_rsi_alpha, adjust=False).mean().to_numpy()
-            _rs      = np.where(_l_ema > 0, _g_ema / _l_ema, 100.0)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                _rs  = np.where(_l_ema > 0, _g_ema / _l_ema, 100.0)
             _m1_rsi: np.ndarray | None = 100.0 - 100.0 / (1.0 + _rs)
         else:
             _m1_rsi = None
