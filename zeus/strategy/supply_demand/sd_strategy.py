@@ -97,6 +97,8 @@ class SDStrategy:
     min_wyckoff_score  : minimum Wyckoff pattern score (default 4.0)
     min_composite_score: minimum zone_score + fib_bonus (default 5.0)
     signal_cooldown    : M1 bars before the same zone can re-signal (default 30)
+    use_trend_filter   : when True, demand zones require a bullish M15 EMA50 slope
+                         and supply zones require a bearish slope (default True)
     """
 
     def __init__(
@@ -108,6 +110,7 @@ class SDStrategy:
         min_wyckoff_score:   float = 4.0,
         min_composite_score: float = 5.0,
         signal_cooldown:     int   = 30,
+        use_trend_filter:    bool  = True,
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -116,6 +119,7 @@ class SDStrategy:
         self.min_wyckoff_score    = min_wyckoff_score
         self.min_composite_score  = min_composite_score
         self.signal_cooldown      = signal_cooldown
+        self.use_trend_filter     = use_trend_filter
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -154,6 +158,16 @@ class SDStrategy:
         # (formed_at, side, zone_bottom) → last M1 bar index that generated a signal
         _last_signal: dict[tuple, int] = {}
 
+        # M15 EMA50 trend filter: only trade in the direction of the trend
+        m15_ema50 = m15_df["close"].ewm(span=50, adjust=False).mean()
+
+        def _trend_is_bullish(ts: pd.Timestamp) -> bool:
+            """Return True when the M15 EMA50 slope is up at timestamp ts."""
+            pos = m15_ema50.index.searchsorted(ts, side="right") - 1
+            if pos < 10:
+                return False  # not enough M15 history for a reliable slope
+            return float(m15_ema50.iloc[pos]) > float(m15_ema50.iloc[pos - 10])
+
         for i in range(len(m1_df)):
             ts  = m1_df.index[i]
             bar = m1_df.iloc[i]
@@ -171,6 +185,13 @@ class SDStrategy:
                     continue
                 if not zone.price_in_zone(float(bar["low"]), float(bar["high"])):
                     continue
+
+                # Trend alignment: demand only in uptrend, supply only in downtrend
+                if self.use_trend_filter:
+                    if zone.side == PivotSide.DEMAND and not _trend_is_bullish(ts):
+                        continue
+                    if zone.side == PivotSide.SUPPLY and _trend_is_bullish(ts):
+                        continue
 
                 # Per-zone cooldown: avoid rapid re-entries on the same zone
                 z_key = (zone.formed_at, zone.side, zone.zone_bottom)

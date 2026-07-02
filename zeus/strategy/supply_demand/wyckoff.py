@@ -198,13 +198,16 @@ class WyckoffDetector:
         n:      int,
     ) -> Optional[tuple]:
         """
-        Forward scan for:
+        Backward scan (most recent accumulation first) for:
             [accum_end tight bars] → Spring (low<accum_l, close>accum_l)
-                                   → MSS   (close>accum_h)
+                                   → MSS   (close>accum_h, must be on bar n-1)
+
+        Scanning backward ensures we return the most recent pattern, and
+        requiring mi == n-1 means the MSS fires on the current (latest) bar.
 
         Returns (accum_h, accum_l, accum_cnt, spring_i, spring_low, mss_i).
         """
-        for accum_end in range(self.min_accum_bars, n - 1):
+        for accum_end in range(n - 2, self.min_accum_bars - 1, -1):
             accum_h, accum_l, ok = self._check_accum(highs, lows, accum_end)
             if not ok:
                 continue
@@ -212,11 +215,13 @@ class WyckoffDetector:
             search_end = min(n, accum_end + self.mss_lookback + 2)
             for si in range(accum_end, search_end - 1):
                 if lows[si] < accum_l and closes[si] > accum_l:
-                    # Spring found — look for MSS
+                    # Spring found — look for MSS on the current bar (n-1)
                     for mi in range(si + 1, min(n, si + self.mss_lookback + 1)):
                         if closes[mi] > accum_h:
-                            return (accum_h, accum_l, accum_end, si, lows[si], mi)
-                    break  # Spring present but no MSS — try larger accum window
+                            if mi == n - 1:
+                                return (accum_h, accum_l, accum_end, si, lows[si], mi)
+                            break  # MSS is stale (already fired on a prior bar)
+                    break  # one spring candidate per accumulation window
 
         return None
 
@@ -228,13 +233,13 @@ class WyckoffDetector:
         n:      int,
     ) -> Optional[tuple]:
         """
-        Forward scan for:
+        Backward scan (most recent accumulation first) for:
             [accum_end tight bars] → Upthrust (high>accum_h, close<accum_h)
-                                   → MSS      (close<accum_l)
+                                   → MSS      (close<accum_l, must be on bar n-1)
 
         Returns (accum_h, accum_l, accum_cnt, upthrust_i, upthrust_high, mss_i).
         """
-        for accum_end in range(self.min_accum_bars, n - 1):
+        for accum_end in range(n - 2, self.min_accum_bars - 1, -1):
             accum_h, accum_l, ok = self._check_accum(highs, lows, accum_end)
             if not ok:
                 continue
@@ -244,7 +249,9 @@ class WyckoffDetector:
                 if highs[si] > accum_h and closes[si] < accum_h:
                     for mi in range(si + 1, min(n, si + self.mss_lookback + 1)):
                         if closes[mi] < accum_l:
-                            return (accum_h, accum_l, accum_end, si, highs[si], mi)
+                            if mi == n - 1:
+                                return (accum_h, accum_l, accum_end, si, highs[si], mi)
+                            break  # MSS is stale
                     break
 
         return None

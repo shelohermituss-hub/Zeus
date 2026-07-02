@@ -109,6 +109,9 @@ def _make_strategy(
 
     wyckoff_map: bar-index → WyckoffPattern (or None). The lambda maps
     end_idx back to bar index: wyckoff_map.get(end_idx - 1).
+
+    Trend filter is disabled by default so tests focus on orchestration;
+    use trend_filter tests below to validate that filter in isolation.
     """
     mock_zones = MagicMock()
     mock_zones.detect_zones.return_value = [zone]
@@ -117,6 +120,7 @@ def _make_strategy(
     mock_wy = MagicMock()
     mock_wy.detect.side_effect = lambda df, side, end_idx: wyckoff_map.get(end_idx - 1)
 
+    kwargs.setdefault("use_trend_filter", False)
     return SDStrategy(zone_detector=mock_zones, wyckoff_detector=mock_wy, **kwargs)
 
 
@@ -322,6 +326,74 @@ def test_no_signal_below_min_composite_score():
     m1   = _m1_demand()
     strat = _make_strategy(zone, {5: _wy_demand(5, m1.index[5])}, min_composite_score=9.0)
     assert strat.run(_m15_df(), m1) == []
+
+
+# ── Trend filter ─────────────────────────────────────────────────────────────
+
+def _m15_df_trending(n: int = 60, bullish: bool = True) -> pd.DataFrame:
+    """60 M15 bars with a clear slope so EMA50 has enough history."""
+    idx = pd.date_range(_T0, periods=n, freq="15min")
+    if bullish:
+        closes = [1.090 + i * 0.001 for i in range(n)]   # rising
+    else:
+        closes = [1.150 - i * 0.001 for i in range(n)]   # falling
+    return pd.DataFrame(
+        {"open": closes, "high": [c + 0.002 for c in closes],
+         "low":  [c - 0.002 for c in closes], "close": closes},
+        index=idx,
+    )
+
+
+def _m1_at_end_of_m15(m15_df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
+    """M1 bars starting 1 min after the last M15 bar."""
+    start = m15_df.index[-1] + pd.Timedelta("1min")
+    idx   = pd.date_range(start, periods=n, freq="1min")
+    return pd.DataFrame(
+        {"open": [1.109]*n, "high": [1.111]*n, "low": [1.107]*n, "close": [1.109]*n},
+        index=idx,
+    )
+
+
+def test_demand_signal_blocked_in_downtrend():
+    """Demand zone must not signal when M15 EMA50 slope is down."""
+    m15  = _m15_df_trending(bullish=False)
+    zone = _demand_zone(m15.index[0])
+    m1   = _m1_at_end_of_m15(m15)
+    strat = _make_strategy(zone, {5: _wy_demand(5, m1.index[5])}, use_trend_filter=True)
+    assert strat.run(m15, m1) == []
+
+
+def test_supply_signal_blocked_in_uptrend():
+    """Supply zone must not signal when M15 EMA50 slope is up."""
+    m15  = _m15_df_trending(bullish=True)
+    zone = _supply_zone(m15.index[0])
+    m1   = _m1_at_end_of_m15(m15)
+    m1["open"]  = 1.113; m1["high"] = 1.114; m1["low"] = 1.112; m1["close"] = 1.113
+    strat = _make_strategy(zone, {5: _wy_supply(5, m1.index[5])}, use_trend_filter=True)
+    assert strat.run(m15, m1) == []
+
+
+def test_demand_signal_passes_in_uptrend():
+    """Demand zone should signal when M15 EMA50 slope is up."""
+    m15  = _m15_df_trending(bullish=True)
+    zone = _demand_zone(m15.index[0])
+    m1   = _m1_at_end_of_m15(m15)
+    strat = _make_strategy(zone, {5: _wy_demand(5, m1.index[5])}, use_trend_filter=True)
+    signals = strat.run(m15, m1)
+    assert len(signals) == 1
+    assert signals[0].direction == "long"
+
+
+def test_supply_signal_passes_in_downtrend():
+    """Supply zone should signal when M15 EMA50 slope is down."""
+    m15  = _m15_df_trending(bullish=False)
+    zone = _supply_zone(m15.index[0])
+    m1   = _m1_at_end_of_m15(m15)
+    m1["open"]  = 1.113; m1["high"] = 1.114; m1["low"] = 1.112; m1["close"] = 1.113
+    strat = _make_strategy(zone, {5: _wy_supply(5, m1.index[5])}, use_trend_filter=True)
+    signals = strat.run(m15, m1)
+    assert len(signals) == 1
+    assert signals[0].direction == "short"
 
 
 # ── Risk validation ───────────────────────────────────────────────────────────
