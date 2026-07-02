@@ -47,18 +47,7 @@ from zeus.strategy.smc.order_block import detect_order_blocks, OrderBlock
 from zeus.strategy.smc.pivot import detect_pivots, BULLISH, BEARISH
 from zeus.strategy.smc.session import is_in_killzone
 from zeus.strategy.smc.structure import detect_structure, StructureType
-
-
-# ── ATR helper ────────────────────────────────────────────────────────────────
-
-def _atr_series(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    h, lo, c = df["high"], df["low"], df["close"]
-    tr = pd.concat([
-        h - lo,
-        (h - c.shift(1)).abs(),
-        (lo - c.shift(1)).abs(),
-    ], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+from zeus.strategy.utils import SignalCooldown, atr_series as _atr_series
 
 
 # ── Signal dataclass ──────────────────────────────────────────────────────────
@@ -151,6 +140,9 @@ class ICTObStrategy:
 
         Returns a chronologically ordered list of ICTSignal objects.
         """
+        if len(m15_df) < 2:
+            return []
+
         _highs  = m15_df["high"].to_numpy(dtype=float)
         _lows   = m15_df["low"].to_numpy(dtype=float)
         _closes = m15_df["close"].to_numpy(dtype=float)
@@ -210,8 +202,8 @@ class ICTObStrategy:
 
         # ── Main loop ─────────────────────────────────────────────────────
         signals:       list[ICTSignal] = []
-        triggered_obs: set[int]        = set()   # ob.bar_index keys
-        _last_sig_bar: int             = -999
+        triggered_obs: set[int]        = set()
+        cooldown = SignalCooldown(self.signal_cooldown)
 
         for i in range(4, n):
             cl_i  = float(_closes[i])
@@ -228,11 +220,11 @@ class ICTObStrategy:
                 continue
 
             # ── Cooldown ──────────────────────────────────────────────────
-            if i - _last_sig_bar < self.signal_cooldown:
+            if not cooldown.can_signal(i):
                 continue
 
-            # ── Scan active bullish OBs ───────────────────────────────────
-            if self.long_only or True:
+            # ── Scan active bullish OBs (long signals) ────────────────────
+            if True:  # always scan bullish OBs for potential longs
                 for ob in bull_obs:
                     if ob.bar_index in triggered_obs:
                         continue
@@ -276,7 +268,7 @@ class ICTObStrategy:
                     )
 
                     triggered_obs.add(ob.bar_index)
-                    _last_sig_bar = i
+                    cooldown.mark(i)
 
                     signals.append(ICTSignal(
                         direction      = "long",
@@ -292,5 +284,70 @@ class ICTObStrategy:
                         structure_type = stype,
                     ))
                     break  # one signal per bar
+
+            # ── Scan active bearish OBs (short signals) — O-02 ───────────
+            if not self.long_only and not any(
+                s.bar_index == i for s in signals
+            ):
+                for ob in bear_obs:
+                    if ob.bar_index in triggered_obs:
+                        continue
+                    if ob.detected_at > i:
+                        continue
+                    ob_age = i - ob.detected_at
+                    if ob_age < self.min_ob_age:
+                        continue
+                    if ob_age > self.max_ob_age:
+                        continue
+                    if ob.mitigated_at != -1 and ob.mitigated_at <= i:
+                        continue
+
+                    # For shorts: H4 must be bearish
+                    if self.use_h4_trend and h4_bull:
+                        continue
+
+                    # Bar retraces up into bearish OB
+                    if hi_i < ob.low:
+                        continue
+                    if cl_i > ob.high:
+                        continue
+
+                    # Confirmation: bearish bar (cl < op) if require_bullish_bar
+                    if self.require_bullish_bar and cl_i >= op_i:
+                        continue
+
+                    sl_buf    = self.sl_buffer_atr * atr_i
+                    sl        = ob.high + sl_buf
+                    risk_dist = sl - cl_i
+                    if risk_dist <= 0:
+                        continue
+                    tp = cl_i - self.risk_reward * risk_dist
+
+                    stype = (
+                        "BOS" if any(
+                            e.bar_index == ob.detected_at
+                            and e.structure_type == StructureType.BOS
+                            for e in filtered_events
+                        )
+                        else "CHoCH"
+                    )
+
+                    triggered_obs.add(ob.bar_index)
+                    cooldown.mark(i)
+
+                    signals.append(ICTSignal(
+                        direction      = "short",
+                        entry_price    = round(cl_i, 2),
+                        stop_loss      = round(sl, 2),
+                        take_profit    = round(tp, 2),
+                        risk_reward    = self.risk_reward,
+                        formed_at      = ts_i,
+                        bar_index      = i,
+                        ob_bar         = ob.bar_index,
+                        ob_high        = round(ob.high, 2),
+                        ob_low         = round(ob.low, 2),
+                        structure_type = stype,
+                    ))
+                    break
 
         return signals

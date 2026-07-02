@@ -34,12 +34,14 @@ SPREAD = {
     "XAUUSD": 0.30,
     "GBPUSD": 0.00020,
     "USDCHF": 0.00020,
+    "CADJPY": 0.008,
 }
 
 _DATA: dict[str, Path] = {
     "XAUUSD": _ROOT / "data" / "historical" / "xauusd" / "m1" / "DAT_MT_XAUUSD_M1_2025.csv",
     "GBPUSD": _ROOT / "data" / "historical" / "gbpusd" / "m1" / "DAT_MT_GBPUSD_M1_2025.csv",
     "USDCHF": _ROOT / "data" / "historical" / "usdchf" / "m1" / "DAT_MT_USDCHF_M1_2025.csv",
+    "CADJPY": _ROOT / "data" / "historical" / "cadjpy" / "m1" / "DAT_MT_CADJPY_M1_2025.csv",
 }
 
 
@@ -84,7 +86,12 @@ def _build(cfg: Cfg) -> ICTObStrategy:
     )
 
 
-def _run(cfg: Cfg, m15_df: pd.DataFrame, spread: float) -> tuple[list, dict[str, Any], int]:
+def _run(
+    cfg: Cfg,
+    m15_df: pd.DataFrame,
+    spread: float,
+    m1_df: pd.DataFrame | None = None,
+) -> tuple[list, dict[str, Any], int]:
     strat   = _build(cfg)
     signals = strat.run(m15_df)
     if not signals:
@@ -92,6 +99,7 @@ def _run(cfg: Cfg, m15_df: pd.DataFrame, spread: float) -> tuple[list, dict[str,
                     "n_wins": 0, "n_losses": 0}, 0
     results, n_exp = simulate_all(
         signals, m15_df, risk_pct=RISK_PCT, spread=spread, max_monthly_losses=0,
+        initial_equity=INITIAL_BALANCE, tick_df=m1_df,
     )
     m = compute_metrics(results, INITIAL_BALANCE, len(signals), n_exp)
     return results, m, len(signals)
@@ -122,6 +130,7 @@ def _run_window(
     symbol:   str,
     m15_df:   pd.DataFrame,
     n_months: float,
+    m1_df:    pd.DataFrame | None = None,
 ) -> dict[str, tuple[dict, int]]:
     spread = SPREAD[symbol]
     print(f"\n  {'─' * 80}")
@@ -129,7 +138,7 @@ def _run_window(
     print(f"  {'─' * 80}")
     rows: list[tuple[Cfg, dict, int]] = []
     for cfg in VARIANTS:
-        _, m, n_sig = _run(cfg, m15_df, spread)
+        _, m, n_sig = _run(cfg, m15_df, spread, m1_df=m1_df)
         rows.append((cfg, m, n_sig))
         print(_line(cfg.label, m, n_sig, n_months))
     return {cfg.label: (m, n_sig) for cfg, m, n_sig in rows}
@@ -137,7 +146,7 @@ def _run_window(
 
 def _print_cross_table(all_results: dict[str, list[tuple[str, dict]]]) -> None:
     headers = []
-    for sym in ["XAUUSD", "GBPUSD", "USDCHF"]:
+    for sym in ["XAUUSD", "GBPUSD", "USDCHF", "CADJPY"]:
         if sym not in all_results:
             continue
         for wlabel, _ in all_results[sym]:
@@ -182,7 +191,7 @@ def _print_cross_table(all_results: dict[str, list[tuple[str, dict]]]) -> None:
 def main() -> None:
     print("=" * 100)
     print("  ICT Order Block Strategy — Multi-Market Robustness  |  M15  |  2025")
-    print("  Markets : XAUUSD · GBPUSD · USDCHF  |  Long-only  |  No H4 filter")
+    print("  Markets : XAUUSD · GBPUSD · USDCHF · CADJPY  |  Long-only  |  No H4 filter")
     print("=" * 100)
 
     m1_data: dict[str, pd.DataFrame] = {}
@@ -202,7 +211,7 @@ def main() -> None:
 
     all_results: dict[str, list[tuple[str, dict]]] = {}
 
-    for sym in ["XAUUSD", "GBPUSD", "USDCHF"]:
+    for sym in ["XAUUSD", "GBPUSD", "USDCHF", "CADJPY"]:
         if sym not in m1_data:
             continue
         m1_full = m1_data[sym]
@@ -218,7 +227,7 @@ def main() -> None:
                 print(f"  {wname}: no data")
                 continue
             m15_sl = resample_ohlcv(m1_sl, "15min")
-            res    = _run_window(f"{sym} {wname}", sym, m15_sl, n_months)
+            res    = _run_window(f"{sym} {wname}", sym, m15_sl, n_months, m1_df=m1_sl)
             all_results[sym].append((wname, res))
 
     _print_cross_table(all_results)

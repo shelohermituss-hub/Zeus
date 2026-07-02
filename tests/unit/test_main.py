@@ -12,6 +12,7 @@ import signal as _signal
 import pytest
 from unittest.mock import MagicMock, patch
 
+from zeus.config import StrategyType
 from zeus.main import main
 
 
@@ -37,6 +38,7 @@ def _settings(is_live: bool = False, **overrides) -> MagicMock:
     s.take_profit_pct     = 0.02
     s.max_position_pct    = 0.02
     s.max_open_positions  = 3
+    s.strategy            = StrategyType.SMC
     s.smc_min_score       = 4.0
     s.telegram_bot_token  = ""
     s.telegram_chat_id    = ""

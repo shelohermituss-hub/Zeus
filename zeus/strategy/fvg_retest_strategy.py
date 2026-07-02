@@ -38,18 +38,7 @@ import pandas as pd
 from zeus.strategy.smc.fvg import detect_fvg
 from zeus.strategy.smc.pivot import BEARISH, BULLISH, detect_pivots
 from zeus.strategy.smc.structure import StructureType, detect_structure
-
-
-# ── ATR helper ────────────────────────────────────────────────────────────────
-
-def _atr_series(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    h, lo, c = df["high"], df["low"], df["close"]
-    tr = pd.concat([
-        h - lo,
-        (h - c.shift(1)).abs(),
-        (lo - c.shift(1)).abs(),
-    ], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+from zeus.strategy.utils import SignalCooldown, atr_series as _atr_series
 
 
 # ── Demand zone (for filter H) ────────────────────────────────────────────────
@@ -256,6 +245,9 @@ class FVGRetestStrategy:
         Returns a chronological list of FVGSignal objects.
         Pass m15_df as both m1_df and the primary DataFrame to simulate_all().
         """
+        if len(m15_df) < 2:
+            return []
+
         # ── FVG detection ──────────────────────────────────────────────────
         fvgs = detect_fvg(
             m15_df["high"], m15_df["low"], m15_df["close"], m15_df["open"]
@@ -366,7 +358,7 @@ class FVGRetestStrategy:
         # ── Main signal loop ──────────────────────────────────────────────
         signals: list[FVGSignal] = []
         _entered: set[int]  = set()
-        _last_sig_bar: int  = -999
+        cooldown = SignalCooldown(self.signal_cooldown)
         _daily_count: dict  = {}
 
         for i in range(3, n):
@@ -385,7 +377,7 @@ class FVGRetestStrategy:
                 continue
 
             # Cooldown
-            if i - _last_sig_bar < self.signal_cooldown:
+            if not cooldown.can_signal(i):
                 continue
 
             h4_bull  = bool(_h4_trend[i]) if _h4_trend is not None else True
@@ -481,7 +473,7 @@ class FVGRetestStrategy:
                 tp        = cl_i + self.risk_reward * risk_dist
 
                 _entered.add(fvg.bar_index)
-                _last_sig_bar = i
+                cooldown.mark(i)
                 _daily_count[date_key] = _daily_count.get(date_key, 0) + 1
 
                 signals.append(FVGSignal(

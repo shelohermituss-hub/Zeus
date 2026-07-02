@@ -45,18 +45,7 @@ from zeus.strategy.smc.harmonic import HarmonicPattern, detect_harmonics
 from zeus.strategy.smc.order_block import detect_order_blocks, OrderBlock
 from zeus.strategy.smc.pivot import detect_pivots, BULLISH
 from zeus.strategy.smc.structure import detect_structure
-
-
-# ── ATR helper ────────────────────────────────────────────────────────────────
-
-def _atr_series(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    h, lo, c = df["high"], df["low"], df["close"]
-    tr = pd.concat([
-        h - lo,
-        (h - c.shift(1)).abs(),
-        (lo - c.shift(1)).abs(),
-    ], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+from zeus.strategy.utils import SignalCooldown, atr_series as _atr_series
 
 
 # ── Signal dataclass ──────────────────────────────────────────────────────────
@@ -146,6 +135,9 @@ class HarmonicICTStrategy:
 
     def run(self, m15_df: pd.DataFrame) -> list[HarmonicICTSignal]:
         """Run hybrid strategy over a full M15 OHLCV DataFrame."""
+        if len(m15_df) < 2:
+            return []
+
         _highs  = m15_df["high"].to_numpy(dtype=float)
         _lows   = m15_df["low"].to_numpy(dtype=float)
         _closes = m15_df["close"].to_numpy(dtype=float)
@@ -205,8 +197,8 @@ class HarmonicICTStrategy:
             return (p.pattern_type, p.direction, p.x_bar, p.c_bar)
 
         # ── Main loop ─────────────────────────────────────────────────────
-        signals:      list[HarmonicICTSignal] = []
-        _last_sig_bar: int = -999
+        signals:  list[HarmonicICTSignal] = []
+        cooldown = SignalCooldown(self.signal_cooldown)
 
         for i in range(4, n):
             cl_i  = float(_closes[i])
@@ -220,7 +212,7 @@ class HarmonicICTStrategy:
             if self.use_h4_trend and not h4_bull:
                 continue
 
-            if i - _last_sig_bar < self.signal_cooldown:
+            if not cooldown.can_signal(i):
                 continue
 
             # ── For each active harmonic pattern ───────────────────────────
@@ -297,7 +289,7 @@ class HarmonicICTStrategy:
 
                 triggered_pats.add(pk)
                 triggered_obs.add(matching_ob.bar_index)
-                _last_sig_bar = i
+                cooldown.mark(i)
 
                 signals.append(HarmonicICTSignal(
                     direction    = "long",

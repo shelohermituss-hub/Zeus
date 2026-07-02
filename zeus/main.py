@@ -34,12 +34,41 @@ from __future__ import annotations
 import signal
 import sys
 
-from zeus.config import ConnectorType, get_settings
+from zeus.config import ConnectorType, StrategyType, get_settings
 from zeus.exchange.factory import create_market_connector
 from zeus.monitoring.telegram import TelegramNotifier
 from zeus.paper.engine import PaperEngine
+from zeus.strategy.base import Strategy
+from zeus.strategy.fvg_retest_strategy import FVGRetestStrategy
+from zeus.strategy.harmonic_ict_strategy import HarmonicICTStrategy
+from zeus.strategy.harmonic_strategy import HarmonicStrategy
+from zeus.strategy.ict_ob_strategy import ICTObStrategy
+from zeus.strategy.portfolio import PortfolioStrategy
 from zeus.strategy.smc_strategy import SMCStrategy
 from zeus.utils.logger import logger, setup_logger
+
+
+def _make_strategy(settings) -> Strategy:
+    """Instantiate the strategy requested by ZEUS_STRATEGY env var."""
+    stype = settings.strategy
+    if stype == StrategyType.SMC:
+        return SMCStrategy(min_score=settings.smc_min_score)
+    if stype == StrategyType.HARMONIC:
+        return PortfolioStrategy([("harmonic", HarmonicStrategy())])
+    if stype == StrategyType.ICT_OB:
+        return PortfolioStrategy([("ict_ob", ICTObStrategy())])
+    if stype == StrategyType.FVG_RETEST:
+        return PortfolioStrategy([("fvg_retest", FVGRetestStrategy())])
+    if stype == StrategyType.HARMONIC_ICT:
+        return PortfolioStrategy([("harmonic_ict", HarmonicICTStrategy())])
+    if stype == StrategyType.PORTFOLIO:
+        return PortfolioStrategy([
+            ("harmonic",     HarmonicStrategy()),
+            ("ict_ob",       ICTObStrategy()),
+            ("fvg_retest",   FVGRetestStrategy()),
+            ("harmonic_ict", HarmonicICTStrategy()),
+        ])
+    raise ValueError(f"Unknown strategy type: {stype}")
 
 
 def main() -> None:
@@ -67,7 +96,8 @@ def main() -> None:
     )
 
     market_connector = create_market_connector(settings)
-    strategy = SMCStrategy(min_score=settings.smc_min_score)
+    strategy = _make_strategy(settings)
+    logger.info("Strategy selected", strategy=settings.strategy.value)
 
     # MT5 requires symbol names without slash ("XAUUSD", not "XAU/USD")
     symbol = (

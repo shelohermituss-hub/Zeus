@@ -27,11 +27,24 @@ Priority 3 realism fixes applied here (vs the original run_sd_june2026 loop):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 import pandas as pd
 
-from zeus.strategy.supply_demand.sd_strategy import SDSignal
+# ── Tradeable Protocol ────────────────────────────────────────────────────────
+# F-03: removed SDSignal import; simulate_trade / simulate_all accept any object
+# that satisfies this structural interface (HarmonicSignal, ICTSignal, SDSignal …).
+
+@runtime_checkable
+class Tradeable(Protocol):
+    """Structural interface required by simulate_trade() and simulate_all()."""
+    direction:   str
+    bar_index:   int
+    stop_loss:   float
+    risk_reward: float
+    formed_at:   pd.Timestamp
+    zone_score:  float
+
 
 # ── Cost model ────────────────────────────────────────────────────────────────
 
@@ -43,8 +56,8 @@ SPREAD_PER_OZ: float = 0.30   # USD per oz — typical XAUUSD CFD spread
 @dataclass
 class TradeResult:
     """Full record of a simulated trade."""
-    signal:           SDSignal
-    entry_price:      float          # effective fill (after spread)
+    signal:           Tradeable      # any Tradeable signal (SDSignal, HarmonicSignal, …)
+    entry_price:      float          # effective fill (after spread + slippage)
     exit_price:       float          # SL or TP fill price
     outcome:          Literal["win", "loss", "scratch"]
     pnl_r:            float          # R multiples (+3.0 win / -1.0 loss / 0.0 scratch)
@@ -59,14 +72,16 @@ class TradeResult:
 # ── Simulation ────────────────────────────────────────────────────────────────
 
 def simulate_trade(
-    signal:       SDSignal,
-    m1_df:        pd.DataFrame,
-    equity:       float,
-    risk_pct:     float = 0.01,
-    spread:       float = SPREAD_PER_OZ,
-    use_be:       bool  = False,
-    tp1_r:        float = 0.0,
-    tp1_size:     float = 0.5,
+    signal:          Tradeable,
+    df:              pd.DataFrame,    # DataFrame whose bar_index signal refers to
+    equity:          float,
+    risk_pct:        float = 0.01,
+    spread:          float = SPREAD_PER_OZ,
+    use_be:          bool  = False,
+    tp1_r:           float = 0.0,
+    tp1_size:        float = 0.5,
+    slippage_ticks:  float = 0.0,    # F-09: additional slippage beyond spread
+    tick_df:         pd.DataFrame | None = None,  # F-08: M1 data for intrabar SL/TP
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
@@ -81,16 +96,34 @@ def simulate_trade(
     use_be: if True (and tp1_r == 0), move SL to break-even once +1R is reached.
             Ignored when tp1_r > 0 (partial TP takes over the BE role).
 
+    tick_df: when provided (M1 data), SL/TP are checked bar-by-bar at M1
+             resolution — much more realistic than M15-only checking.
+             signal.bar_index still refers to the M15 (df) frame.
+
     Returns None if the trade expires (still open at end of data).
     """
-    entry_bar = signal.bar_index + 1
-    if entry_bar >= len(m1_df):
+    # F-08: determine the price DataFrame used for bar-by-bar SL/TP scan
+    scan_df = tick_df if tick_df is not None else df
+
+    entry_bar_df = signal.bar_index + 1
+    if entry_bar_df >= len(df):
         return None
 
-    raw_open = float(m1_df.iloc[entry_bar]["open"])
-    is_long   = signal.direction == "long"
+    # Map M15 entry bar to the tick_df (M1) if provided
+    if tick_df is not None:
+        m15_entry_ts = df.index[entry_bar_df]
+        entry_bar = int(scan_df.index.searchsorted(m15_entry_ts))
+        if entry_bar >= len(scan_df):
+            return None
+    else:
+        entry_bar = entry_bar_df
 
-    effective_entry = raw_open + spread if is_long else raw_open - spread
+    raw_open = float(scan_df.iloc[entry_bar]["open"])
+    is_long  = signal.direction == "long"
+
+    # F-09: slippage applied on top of spread
+    total_cost      = spread + slippage_ticks
+    effective_entry = raw_open + total_cost if is_long else raw_open - total_cost
 
     sl = signal.stop_loss
     sl_dist = abs(effective_entry - sl)
@@ -132,8 +165,8 @@ def simulate_trade(
             equity_at_entry = equity,
         )
 
-    for bar_idx in range(entry_bar, len(m1_df)):
-        bar = m1_df.iloc[bar_idx]
+    for bar_idx in range(entry_bar, len(scan_df)):
+        bar = scan_df.iloc[bar_idx]
         lo  = float(bar["low"])
         hi  = float(bar["high"])
 
@@ -174,8 +207,8 @@ def simulate_trade(
 
 
 def simulate_all(
-    signals:            list[SDSignal],
-    m1_df:              pd.DataFrame,
+    signals:            list[Tradeable],
+    df:                 pd.DataFrame,
     risk_pct:           float = 0.01,
     spread:             float = SPREAD_PER_OZ,
     max_daily_losses:   int   = 0,
@@ -183,6 +216,9 @@ def simulate_all(
     use_be:             bool  = False,
     tp1_r:              float = 0.0,
     tp1_size:           float = 0.5,
+    initial_equity:     float = 10_000.0,   # F-02: was hardcoded inside the function
+    slippage_ticks:     float = 0.0,         # F-09: additional slippage
+    tick_df:            pd.DataFrame | None = None,  # F-08: M1 data for SL/TP resolution
 ) -> tuple[list[TradeResult], int]:
     """
     Simulate all signals sequentially with compounding equity.
@@ -196,7 +232,7 @@ def simulate_all(
     """
     results:   list[TradeResult] = []
     n_expired: int               = 0
-    equity = 10_000.0
+    equity = initial_equity   # F-02: use caller-specified initial equity
 
     _day_losses:   dict[str, int] = {}
     _month_losses: dict[str, int] = {}
@@ -213,7 +249,10 @@ def simulate_all(
             n_expired += 1
             continue
 
-        result = simulate_trade(sig, m1_df, equity, risk_pct, spread, use_be, tp1_r, tp1_size)
+        result = simulate_trade(
+            sig, df, equity, risk_pct, spread, use_be, tp1_r, tp1_size,
+            slippage_ticks=slippage_ticks, tick_df=tick_df,
+        )
         if result is None:
             n_expired += 1
             continue
@@ -297,21 +336,21 @@ def print_report(
     initial_equity: float,
     n_signals:      int,
     n_expired:      int,
-    m1_df:          pd.DataFrame,
+    df:             pd.DataFrame,
     label:          str = "",
 ) -> None:
     """Print a full backtest summary including trade log."""
     m = compute_metrics(results, initial_equity, n_signals, n_expired)
 
-    data_start = m1_df.index[0].strftime("%Y-%m-%d")
-    data_end   = m1_df.index[-1].strftime("%Y-%m-%d")
+    data_start = df.index[0].strftime("%Y-%m-%d")
+    data_end   = df.index[-1].strftime("%Y-%m-%d")
     header = f"S&D Strategy — XAUUSD{' (' + label + ')' if label else ''}"
 
     print("=" * 62)
     print(f"  {header}")
     print("=" * 62)
     print(f"  Data            : {data_start}  →  {data_end}")
-    print(f"  M1 bars         : {len(m1_df):,}")
+    print(f"  Bars            : {len(df):,}")
     print()
     print(f"  Signals         : {m['n_signals']}")
     print(f"  Trades closed   : {m['n_trades']}")
@@ -341,12 +380,14 @@ def print_report(
         for i, r in enumerate(results, 1):
             sig = r.signal
             ts  = sig.formed_at.strftime("%Y-%m-%d")
+            wyckoff = getattr(sig, "wyckoff_score", None)
+            wyckoff_col = f"  {wyckoff:>5.2f}" if wyckoff is not None else ""
             print(
                 f"  {i:>3}  {ts:>11}  {sig.direction:>5}  "
                 f"{r.entry_price:>9.3f}  {r.exit_price:>9.3f}  "
                 f"{r.pnl_r:>+5.1f}R  {r.pnl_usd:>+8.2f}  "
                 f"{r.spread_cost_usd:>6.2f}  "
-                f"{sig.zone_score:>5.2f}  {sig.wyckoff_score:>5.2f}"
+                f"{sig.zone_score:>5.2f}{wyckoff_col}"
             )
         print()
 

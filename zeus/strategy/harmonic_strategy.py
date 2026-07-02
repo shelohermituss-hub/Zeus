@@ -33,18 +33,7 @@ import numpy as np
 import pandas as pd
 
 from zeus.strategy.smc.harmonic import HarmonicPattern, detect_harmonics
-
-
-# ── ATR helper ────────────────────────────────────────────────────────────────
-
-def _atr_series(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    h, lo, c = df["high"], df["low"], df["close"]
-    tr = pd.concat([
-        h - lo,
-        (h - c.shift(1)).abs(),
-        (lo - c.shift(1)).abs(),
-    ], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+from zeus.strategy.utils import SignalCooldown, atr_series as _atr_series
 
 
 # ── Signal dataclass ──────────────────────────────────────────────────────────
@@ -128,6 +117,9 @@ class HarmonicStrategy:
 
         Returns a chronologically ordered list of HarmonicSignal objects.
         """
+        if len(m15_df) < 2:
+            return []
+
         _highs  = m15_df["high"].to_numpy(dtype=float)
         _lows   = m15_df["low"].to_numpy(dtype=float)
         _closes = m15_df["close"].to_numpy(dtype=float)
@@ -167,7 +159,6 @@ class HarmonicStrategy:
             return []
 
         # ── Per-pattern invalidation tracking ─────────────────────────────
-        # pattern key → bar where pattern was broken (close through PRZ)
         invalidated: set[tuple] = set()
         triggered:   set[tuple] = set()
 
@@ -175,8 +166,8 @@ class HarmonicStrategy:
             return (p.pattern_type, p.direction, p.x_bar, p.c_bar)
 
         # ── Main loop ─────────────────────────────────────────────────────
-        signals:      list[HarmonicSignal] = []
-        _last_sig_bar: int = -999
+        signals:  list[HarmonicSignal] = []
+        cooldown = SignalCooldown(self.signal_cooldown)
 
         for i in range(4, n):
             cl_i  = float(_closes[i])
@@ -212,7 +203,7 @@ class HarmonicStrategy:
                     if self.require_bullish_bar and cl_i <= op_i:
                         continue
 
-                    if i - _last_sig_bar < self.signal_cooldown:
+                    if not cooldown.can_signal(i):
                         continue
 
                     sl_buf    = self.sl_buffer_atr * atr_i
@@ -223,7 +214,7 @@ class HarmonicStrategy:
                     tp = cl_i + self.risk_reward * risk_dist
 
                     triggered.add(k)
-                    _last_sig_bar = i
+                    cooldown.mark(i)
 
                     signals.append(HarmonicSignal(
                         direction    = "long",

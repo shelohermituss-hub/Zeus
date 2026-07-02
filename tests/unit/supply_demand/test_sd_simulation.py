@@ -295,3 +295,92 @@ def test_entry_bar_beyond_data_returns_none():
     )
     result = simulate_trade(sig, m1, equity=10_000.0, spread=SPREAD)
     assert result is None
+
+
+# ── Non-SDSignal Tradeable tests (F-03) ───────────────────────────────────────
+
+from dataclasses import dataclass as _dc
+from zeus.backtest.sd_simulation import simulate_all, Tradeable
+
+
+@_dc(frozen=True)
+class _SimpleSignal:
+    """Minimal Tradeable — not an SDSignal."""
+    direction:   str
+    bar_index:   int
+    stop_loss:   float
+    risk_reward: float
+    formed_at:   pd.Timestamp
+    zone_score:  float
+    entry_price: float = 0.0  # unused by simulate_trade; documented as duck-typed
+
+
+def test_tradeable_protocol_accepted():
+    """simulate_trade() must accept any Tradeable, not just SDSignal (F-03)."""
+    sig = _SimpleSignal(
+        direction   = "long",
+        bar_index   = 4,
+        stop_loss   = 1880.0,
+        risk_reward = 2.0,
+        formed_at   = _T0,
+        zone_score  = 5.0,
+    )
+    m1 = _m1(
+        opens  = [0]*5 + [1910.0, 1910.0, 1910.0, 1910.0, 2000.0],
+        highs  = [0]*5 + [1920.0, 1920.0, 1920.0, 1920.0, 2050.0],
+        lows   = [0]*5 + [1905.0, 1905.0, 1905.0, 1905.0, 1990.0],
+        closes = [0]*5 + [1912.0, 1912.0, 1912.0, 1912.0, 2000.0],
+    )
+    result = simulate_trade(sig, m1, equity=10_000.0, spread=SPREAD)
+    assert result is not None
+    assert result.outcome in ("win", "loss", "scratch")
+    assert result.entry_price == pytest.approx(1910.0 + SPREAD, abs=1e-4)
+
+
+def test_simulate_all_with_non_sd_signal():
+    """simulate_all() returns correct trade count with non-SDSignal Tradeables (F-02 / F-03)."""
+    sig1 = _SimpleSignal(
+        direction="long", bar_index=4, stop_loss=1880.0,
+        risk_reward=2.0, formed_at=_T0, zone_score=5.0,
+    )
+    sig2 = _SimpleSignal(
+        direction="long", bar_index=8, stop_loss=1850.0,
+        risk_reward=2.0, formed_at=_T0 + pd.Timedelta(minutes=60), zone_score=4.0,
+    )
+    m1 = _m1(
+        opens  = [0]*5 + [1910.0]*5 + [1950.0]*5,
+        highs  = [0]*5 + [1920.0]*5 + [2100.0]*5,
+        lows   = [0]*5 + [1905.0]*5 + [1870.0]*5,
+        closes = [0]*5 + [1912.0]*5 + [2080.0]*5,
+    )
+    results, n_exp = simulate_all(
+        [sig1, sig2], m1, risk_pct=0.01, spread=SPREAD,
+        initial_equity=10_000.0,
+    )
+    assert isinstance(results, list)
+    assert isinstance(n_exp, int)
+    assert len(results) + n_exp == 2
+
+
+def test_simulate_all_initial_equity_used():
+    """simulate_all() must start from the caller-supplied initial_equity (F-02)."""
+    sig = _SimpleSignal(
+        direction="long", bar_index=4, stop_loss=1880.0,
+        risk_reward=2.0, formed_at=_T0, zone_score=5.0,
+    )
+    m1 = _m1(
+        opens  = [0]*5 + [1910.0, 1910.0, 1910.0, 1910.0, 1870.0],
+        highs  = [0]*5 + [1920.0, 1920.0, 1920.0, 1920.0, 1890.0],
+        lows   = [0]*5 + [1905.0, 1905.0, 1905.0, 1905.0, 1865.0],
+        closes = [0]*5 + [1912.0, 1912.0, 1912.0, 1912.0, 1870.0],
+    )
+    # equity_at_entry should reflect the caller's initial equity, not a hardcoded 10_000
+    results_50k, _ = simulate_all([sig], m1, risk_pct=0.01, spread=SPREAD, initial_equity=50_000.0)
+    results_10k, _ = simulate_all([sig], m1, risk_pct=0.01, spread=SPREAD, initial_equity=10_000.0)
+    if results_50k and results_10k:
+        assert results_50k[0].equity_at_entry == pytest.approx(50_000.0)
+        assert results_10k[0].equity_at_entry == pytest.approx(10_000.0)
+        # 5× equity → 5× USD loss
+        assert abs(results_50k[0].pnl_usd) == pytest.approx(
+            abs(results_10k[0].pnl_usd) * 5, rel=0.01
+        )

@@ -27,6 +27,15 @@ class LogLevel(str, Enum):
     ERROR = "ERROR"
 
 
+class StrategyType(str, Enum):
+    SMC          = "smc"
+    HARMONIC     = "harmonic"
+    ICT_OB       = "ict_ob"
+    FVG_RETEST   = "fvg_retest"
+    HARMONIC_ICT = "harmonic_ict"
+    PORTFOLIO    = "portfolio"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ZEUS_",
@@ -70,7 +79,8 @@ class Settings(BaseSettings):
     max_open_positions:    int   = Field(default=3,    ge=1)
 
     # Strategy
-    smc_min_score: float = Field(default=4.0, ge=1.0, le=10.0)
+    strategy:      StrategyType = StrategyType.SMC
+    smc_min_score: float        = Field(default=4.0, ge=1.0, le=10.0)
 
     # Logging
     log_level: LogLevel = LogLevel.INFO

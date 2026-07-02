@@ -24,6 +24,7 @@ from zeus.monitoring.metrics import SessionMetrics
 from zeus.monitoring.telegram import TelegramNotifier
 from zeus.orders.executor import OrderExecutor
 from zeus.orders.models import TradeStatus
+from zeus.paper.signal_store import SignalStore
 from zeus.risk.manager import RiskManager
 from zeus.strategy.base import Strategy
 from zeus.utils.logger import logger
@@ -67,6 +68,7 @@ class PaperEngine:
         slippage_pct: float = 0.0005,
         alert_config: AlertConfig | None = None,
         notifier: TelegramNotifier | None = None,
+        signal_store_path: str = "",
     ) -> None:
         self._strategy       = strategy
         self._market         = market_connector
@@ -78,9 +80,12 @@ class PaperEngine:
         self._running        = False
         self._last_day: date | None = None
 
-        self._metrics  = SessionMetrics(initial_balance)
-        self._alerts   = AlertManager(alert_config)
-        self._notifier = notifier or TelegramNotifier(bot_token="", chat_id="")
+        self._metrics       = SessionMetrics(initial_balance)
+        self._alerts        = AlertManager(alert_config)
+        self._notifier      = notifier or TelegramNotifier(bot_token="", chat_id="")
+        self._signal_store: SignalStore | None = (
+            SignalStore(signal_store_path) if signal_store_path else None
+        )
 
         self._paper = PaperConnector(initial_balance=initial_balance, slippage_pct=slippage_pct)
         self._risk  = RiskManager(
@@ -185,6 +190,8 @@ class PaperEngine:
             logger.info("Paper trading stopped by user (KeyboardInterrupt)")
         finally:
             self._running = False
+            if self._signal_store is not None:
+                self._signal_store.close()
             logger.info(
                 "Paper trading stopped",
                 ticks=tick,
@@ -245,6 +252,15 @@ class PaperEngine:
                     sl=new_trade.sl_price,
                     tp=new_trade.tp_price,
                 )
+                if self._signal_store is not None:
+                    try:
+                        self._signal_store.record_signal(
+                            signal,
+                            strategy_name=type(self._strategy).__name__,
+                            symbol=self._symbol,
+                        )
+                    except Exception as exc:
+                        logger.warning("SignalStore record failed", error=str(exc))
 
             # Equity snapshot with unrealised P&L
             open_pnl = sum(
