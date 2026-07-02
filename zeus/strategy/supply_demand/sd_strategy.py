@@ -146,6 +146,10 @@ class SDStrategy:
                            None → uses min_zone_score (default None)
     min_zone_score_short : override min_zone_score for supply (short) signals only;
                            None → uses min_zone_score (default None)
+    min_wyckoff_score_long  : override min_wyckoff_score for demand signals only;
+                              None → uses min_wyckoff_score (default None)
+    min_wyckoff_score_short : override min_wyckoff_score for supply signals only;
+                              None → uses min_wyckoff_score (default None)
     max_daily_losses     : stop emitting signals for the rest of a calendar day once
                            this many losses have been incurred that day; 0 = unlimited
     """
@@ -170,8 +174,10 @@ class SDStrategy:
         adx_min:             float = 20.0,
         adx_period:          int   = 14,
         first_signal_per_zone: bool = False,
-        min_zone_score_long:  Optional[float] = None,
-        min_zone_score_short: Optional[float] = None,
+        min_zone_score_long:    Optional[float] = None,
+        min_zone_score_short:   Optional[float] = None,
+        min_wyckoff_score_long:  Optional[float] = None,
+        min_wyckoff_score_short: Optional[float] = None,
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -193,6 +199,8 @@ class SDStrategy:
         self.first_signal_per_zone   = first_signal_per_zone
         self.min_zone_score_long     = min_zone_score_long  if min_zone_score_long  is not None else min_zone_score
         self.min_zone_score_short    = min_zone_score_short if min_zone_score_short is not None else min_zone_score
+        self.min_wyckoff_score_long  = min_wyckoff_score_long  if min_wyckoff_score_long  is not None else min_wyckoff_score
+        self.min_wyckoff_score_short = min_wyckoff_score_short if min_wyckoff_score_short is not None else min_wyckoff_score
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -445,12 +453,15 @@ class SDStrategy:
                         _m1_highs, _m1_lows, _m1_closes, _m1_opens,
                         _m1_index, zone.side, end_idx=i + 1,
                     )
-                    if (w is None or w.score < self.min_wyckoff_score or w.mss_bar != i):
-                        _wy_cache[wy_key] = False
-                    else:
-                        _wy_cache[wy_key] = w
+                    # Cache None/mss_bar mismatch as False; valid patterns stored raw
+                    # (threshold check done below so asymmetric long/short scores work)
+                    _wy_cache[wy_key] = w if (w is not None and w.mss_bar == i) else False
                 wyckoff = _wy_cache[wy_key]
                 if wyckoff is False:
+                    continue
+                min_wy = (self.min_wyckoff_score_long if zone.side == PivotSide.DEMAND
+                          else self.min_wyckoff_score_short)
+                if wyckoff.score < min_wy:
                     continue
 
                 # Sync zone score to current state before building signal

@@ -94,6 +94,9 @@ class VariantConfig:
     # Asymmetric zone score thresholds (None → uses min_zone_score)
     min_zone_score_long:  Optional[float] = None
     min_zone_score_short: Optional[float] = None
+    # Asymmetric Wyckoff score thresholds (None → uses min_wyckoff_score)
+    min_wyckoff_score_long:  Optional[float] = None
+    min_wyckoff_score_short: Optional[float] = None
     # Partial take-profit (tp1_r=0 → disabled; tp2 = risk_reward)
     tp1_r:    float = 0.0   # first TP in R multiples (e.g., 1.0 = 1R)
     tp1_size: float = 0.5   # fraction of position to close at TP1
@@ -417,6 +420,129 @@ VARIANTS: list[VariantConfig] = [
         tp1_r              = 0.8,
     ),
     # ══════════════════════════════════════════════════════════════════════════
+    # ROUND 16 — Break the volume wall: price_ema + NO partial TP + asymmetric Wy
+    #
+    # Round 15 verdict:
+    #   V82 (price_ema, no tp1, 54.3% WR): best EV/trade (0.9R), 3.77R/month.
+    #   Partial TP collapses EV: 48-68% of "wins" are 0.4R scratches → monthly R ↓
+    #   Expanding thresholds WITH tp1 gives even less (V85=0.65R/month, V86=0.51R/mo).
+    #
+    # Round 16 hypothesis:
+    #   A) price_ema + NO partial TP + wider thresholds → more signals at V82-quality EV
+    #   B) Asymmetric Wyckoff: wy_long≥5.5, wy_short≥7.0+ → blocks bad shorts without
+    #      killing good longs → more volume than pure long-only, WR higher than V85/V86
+    #   C) Long-only + lower cooldown → push long volume past 51 signals/year
+    #
+    # Group A: price_ema + NO partial TP (compare to V84/V85/V86 which had tp1=0.8R)
+    # V87: same universe as V84 (zone≥5.0 wy≥5.9 d6) but without partial TP
+    # V88: same universe as V85 (zone≥5.0 wy≥5.5 d6) but without partial TP
+    # V89: same universe as V86 (zone≥4.5 wy≥5.5 d8) but without partial TP
+    # V90: V89 without monthly-loss cap (test if mloss4 helps or hurts here)
+    #
+    # Group B: Asymmetric Wyckoff (new capability: min_wyckoff_score_long/short)
+    # V91: wy_long≥5.5 wy_short≥7.0, zone≥5.0, cool10, d6, price_ema, no_tp
+    # V92: wy_long≥5.5 wy_short≥7.5, zone≥4.5, cool10, d8, price_ema, no_tp
+    # V93: wy_long≥5.0 wy_short≥7.0, zone≥4.5, cool10, d8, price_ema, no_tp (more longs)
+    #
+    # Group C: Long-only + reduced cooldown (push long volume ceiling)
+    # V94: long-only zone≥4.5 wy≥5.5 cool5 d10 no_tp mloss4
+    # V95: long-only zone≥4.0 wy≥5.5 cool5 d10 no_tp mloss4 (floor on zone score)
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── Group A: price_ema + NO partial TP ───────────────────────────────────
+    VariantConfig(
+        label              = "V87 · price_ema zone≥5.0 wy≥5.9 d6 no_tp mloss4",
+        **_WW,
+        min_zone_score     = 5.0, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+    ),
+    VariantConfig(
+        label              = "V88 · price_ema zone≥5.0 wy≥5.5 d6 no_tp mloss4",
+        **_WW,
+        min_zone_score     = 5.0, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+    ),
+    VariantConfig(
+        label              = "V89 · price_ema zone≥4.5 wy≥5.5 d8 no_tp mloss4",
+        **_WW,
+        min_zone_score     = 4.5, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=8,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+    ),
+    VariantConfig(
+        label              = "V90 · price_ema zone≥4.5 wy≥5.5 d8 no_tp no_mloss",
+        **_WW,
+        min_zone_score     = 4.5, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=8,
+        risk_reward        = 2.5,
+        max_monthly_losses = 0,
+    ),
+    # ── Group B: Asymmetric Wyckoff (new capability) ──────────────────────────
+    VariantConfig(
+        label              = "V91 · asym wy_L≥5.5 wy_S≥7.0 zone≥5.0 d6 price_ema",
+        **_WW,
+        min_zone_score     = 5.0, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        min_wyckoff_score_long  = 5.5,
+        min_wyckoff_score_short = 7.0,
+    ),
+    VariantConfig(
+        label              = "V92 · asym wy_L≥5.5 wy_S≥7.5 zone≥4.5 d8 price_ema",
+        **_WW,
+        min_zone_score     = 4.5, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=8,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        min_wyckoff_score_long  = 5.5,
+        min_wyckoff_score_short = 7.5,
+    ),
+    VariantConfig(
+        label              = "V93 · asym wy_L≥5.0 wy_S≥7.0 zone≥4.5 d8 price_ema",
+        **_WW,
+        min_zone_score     = 4.5, min_wyckoff_score=5.0,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=8,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        min_wyckoff_score_long  = 5.0,
+        min_wyckoff_score_short = 7.0,
+    ),
+    # ── Group C: Long-only + reduced cooldown ─────────────────────────────────
+    VariantConfig(
+        label              = "V94 · long-only zone≥4.5 wy≥5.5 cool5 d10 no_tp",
+        **_WW,
+        min_zone_score        = 4.5, min_wyckoff_score=5.5,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 5,   daily_cap=10,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 4.5,
+        min_zone_score_short  = 999.0,
+    ),
+    VariantConfig(
+        label              = "V95 · long-only zone≥4.0 wy≥5.5 cool5 d10 no_tp",
+        **_WW,
+        min_zone_score        = 4.0, min_wyckoff_score=5.5,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 5,   daily_cap=10,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 4.0,
+        min_zone_score_short  = 999.0,
+    ),
+    # ══════════════════════════════════════════════════════════════════════════
     # PRODUCTION CHAMPION — V54
     # Discovered after 11 rounds of iterative optimisation on XAUUSD 2025 M1.
     #
@@ -469,8 +595,10 @@ def _build_strategy(cfg: VariantConfig) -> SDStrategy:
         use_adx_filter         = cfg.use_adx_filter,
         adx_min                = cfg.adx_min,
         first_signal_per_zone  = cfg.first_signal_per_zone,
-        min_zone_score_long    = cfg.min_zone_score_long,
-        min_zone_score_short   = cfg.min_zone_score_short,
+        min_zone_score_long      = cfg.min_zone_score_long,
+        min_zone_score_short     = cfg.min_zone_score_short,
+        min_wyckoff_score_long   = cfg.min_wyckoff_score_long,
+        min_wyckoff_score_short  = cfg.min_wyckoff_score_short,
     )
 
 
