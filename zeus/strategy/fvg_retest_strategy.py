@@ -25,6 +25,8 @@ E  min_impulse_atr_mult     : FVG impulse bar must be ≥ X × ATR
 F  session_start/end_utc    : restrict to active session hours
 G  risk_reward              : R:R target (lower = higher WR)
 H  use_sd_confluence        : FVG must overlap with an active M15 demand zone
+I  use_d1_regime            : suspend trading when D1 close < D1 EMA (bear regime)
+       d1_ema_span             : D1 EMA span for regime filter (default 200)
 """
 from __future__ import annotations
 
@@ -175,6 +177,8 @@ class FVGRetestStrategy:
     H  use_sd_confluence       : FVG must overlap active demand zone (default False)
        sd_pivot_size           : pivot size for demand zone detection (default 10)
        sd_zone_buffer_atr_mult : zone/FVG overlap tolerance in ATR (default 0.30)
+    I  use_d1_regime           : skip entries when D1 close < D1 EMA (default False)
+       d1_ema_span             : D1 EMA span (default 200)
     """
 
     def __init__(
@@ -211,6 +215,9 @@ class FVGRetestStrategy:
         use_sd_confluence:       bool  = False,
         sd_pivot_size:           int   = 10,
         sd_zone_buffer_atr_mult: float = 0.30,
+        # ── Filter I ─────────────────────────────────────────────────────────
+        use_d1_regime:           bool  = False,
+        d1_ema_span:             int   = 200,
     ) -> None:
         self.risk_reward             = risk_reward
         self.min_fvg_atr_mult        = min_fvg_atr_mult
@@ -237,6 +244,8 @@ class FVGRetestStrategy:
         self.use_sd_confluence       = use_sd_confluence
         self.sd_pivot_size           = sd_pivot_size
         self.sd_zone_buffer_atr_mult = sd_zone_buffer_atr_mult
+        self.use_d1_regime           = use_d1_regime
+        self.d1_ema_span             = d1_ema_span
 
     # ── Public ───────────────────────────────────────────────────────────────
 
@@ -337,6 +346,23 @@ class FVGRetestStrategy:
         if self.use_sd_confluence:
             _demand_zones = _detect_demand_zones(m15_df, pivot_size=self.sd_pivot_size)
 
+        # ── Filter I : D1 regime (close > D1 EMA) ────────────────────────
+        _d1_regime_m15: np.ndarray | None = None
+        if self.use_d1_regime:
+            d1_df = m15_df.resample("1D", closed="left", label="left").agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last"}
+            ).dropna()
+            d1_ema    = d1_df["close"].ewm(span=self.d1_ema_span, adjust=False).mean()
+            _d1_v     = d1_ema.to_numpy(dtype=float)
+            _d1_cl    = d1_df["close"].to_numpy(dtype=float)
+            # Map each M15 bar to the *previous completed* D1 bar (causal)
+            m15_to_d1 = np.searchsorted(
+                d1_df.index.values, m15_df.index.values, side="right"
+            ) - 1
+            m15_to_d1 = np.clip(m15_to_d1, 0, len(d1_df) - 1)
+            # Bull regime: previous D1 close > D1 EMA at that bar
+            _d1_regime_m15 = _d1_cl[m15_to_d1] > _d1_v[m15_to_d1]
+
         # ── Main signal loop ──────────────────────────────────────────────
         signals: list[FVGSignal] = []
         _entered: set[int]  = set()
@@ -387,6 +413,10 @@ class FVGRetestStrategy:
                     continue  # bearish structure is more recent
                 if i - last_bull > self.m15_bos_lookback:
                     continue  # bullish structure too old
+
+            # Filter I : D1 regime
+            if _d1_regime_m15 is not None and not bool(_d1_regime_m15[i]):
+                continue
 
             for fvg in fvgs:
                 if fvg.bar_index >= i:
