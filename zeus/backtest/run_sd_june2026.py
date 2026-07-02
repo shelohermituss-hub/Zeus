@@ -262,37 +262,46 @@ def _print_report(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def _run_variant(
-    m15_df:   pd.DataFrame,
-    m1_df:    pd.DataFrame,
-    label:    str,
-    wy_accum_mult: float = 3.0,
-    wy_mss_lb:     int   = 10,
-    cooldown:      int   = 30,
+    m15_df:        pd.DataFrame,
+    m1_df:         pd.DataFrame,
+    label:         str,
+    wy_accum_mult:        float = 3.0,
+    wy_mss_lb:            int   = 10,
+    wy_spring_sweep_pct:  float = 0.20,
+    wy_mss_strength_pct:  float = 0.10,
+    cooldown:             int   = 30,
+    max_signals_per_day:  int   = 2,
 ) -> None:
     """Run one parameter variant and print its report."""
     from zeus.strategy.supply_demand.zone_detector import ZoneDetector as ZD
     from zeus.strategy.supply_demand.wyckoff import WyckoffDetector as WD
 
     zd = ZD()
-    wd = WD(accum_range_mult=wy_accum_mult, mss_lookback=wy_mss_lb)
 
-    # Replicate the inner loop to count funnel steps
-    all_zones = zd.detect_zones(m15_df)
-    n_zone_entries = n_wy_fires = n_mss_match = 0
+    def _make_wd() -> WD:
+        return WD(
+            accum_range_mult     = wy_accum_mult,
+            mss_lookback         = wy_mss_lb,
+            min_spring_sweep_pct = wy_spring_sweep_pct,
+            min_mss_strength_pct = wy_mss_strength_pct,
+        )
 
     strategy = SDStrategy(
-        zone_detector       = ZD(),
-        wyckoff_detector    = WD(accum_range_mult=wy_accum_mult, mss_lookback=wy_mss_lb),
-        risk_reward         = RISK_REWARD,
-        min_zone_score      = MIN_ZONE_SCORE,
-        min_wyckoff_score   = MIN_WYCKOFF_SCORE,
-        min_composite_score = MIN_COMPOSITE,
-        signal_cooldown     = cooldown,
+        zone_detector        = ZD(),
+        wyckoff_detector     = _make_wd(),
+        risk_reward          = RISK_REWARD,
+        min_zone_score       = MIN_ZONE_SCORE,
+        min_wyckoff_score    = MIN_WYCKOFF_SCORE,
+        min_composite_score  = MIN_COMPOSITE,
+        signal_cooldown      = cooldown,
+        max_signals_per_day  = max_signals_per_day,
+        # trend + session filters use their defaults (True)
     )
 
-    # Manual funnel count on a fresh zone set
+    # Manual funnel count on a fresh zone set (pre-filter snapshot)
+    n_zone_entries = n_wy_fires = n_mss_match = 0
     zones_diag = zd.detect_zones(m15_df)
-    wd_diag    = WD(accum_range_mult=wy_accum_mult, mss_lookback=wy_mss_lb)
+    wd_diag    = _make_wd()
     for i in range(len(m1_df)):
         ts  = m1_df.index[i]
         bar = m1_df.iloc[i]
@@ -325,17 +334,21 @@ def main() -> None:
     m15_df = resample_ohlcv(m1_df, "15min")
     print(f"  {len(m15_df):,} M15 bars")
 
-    # ── Variant A — default (strict) ─────────────────────────────────────────
-    print("\nVariant A — default params (accum_mult=3.0, mss_lb=10, cooldown=30) …")
+    # ── Variant A — strict (all Priority 1+2 filters active) ─────────────────
+    print("\nVariant A — strict (accum_mult=3.0, mss_lb=10, daily_cap=2) …")
     _run_variant(m15_df, m1_df,
-                 label="default: accum_mult=3.0, mss_lb=10",
-                 wy_accum_mult=3.0, wy_mss_lb=10, cooldown=30)
+                 label="strict: accum_mult=3.0, mss_lb=10, daily_cap=2",
+                 wy_accum_mult=3.0, wy_mss_lb=10,
+                 wy_spring_sweep_pct=0.20, wy_mss_strength_pct=0.10,
+                 cooldown=30, max_signals_per_day=2)
 
-    # ── Variant B — relaxed Wyckoff ──────────────────────────────────────────
-    print("\nVariant B — relaxed Wyckoff (accum_mult=5.0, mss_lb=15, cooldown=15) …")
+    # ── Variant B — relaxed Wyckoff (still with quality + session filters) ────
+    print("\nVariant B — relaxed (accum_mult=5.0, mss_lb=15, daily_cap=2) …")
     _run_variant(m15_df, m1_df,
-                 label="relaxed: accum_mult=5.0, mss_lb=15",
-                 wy_accum_mult=5.0, wy_mss_lb=15, cooldown=15)
+                 label="relaxed: accum_mult=5.0, mss_lb=15, daily_cap=2",
+                 wy_accum_mult=5.0, wy_mss_lb=15,
+                 wy_spring_sweep_pct=0.20, wy_mss_strength_pct=0.10,
+                 cooldown=15, max_signals_per_day=2)
 
 
 if __name__ == "__main__":

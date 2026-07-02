@@ -97,8 +97,16 @@ class SDStrategy:
     min_wyckoff_score  : minimum Wyckoff pattern score (default 4.0)
     min_composite_score: minimum zone_score + fib_bonus (default 5.0)
     signal_cooldown    : M1 bars before the same zone can re-signal (default 30)
-    use_trend_filter   : when True, demand zones require a bullish M15 EMA50 slope
-                         and supply zones require a bearish slope (default True)
+    use_trend_filter     : when True, demand zones require a bullish M15 EMA50 slope
+                           and supply zones require a bearish slope (default True)
+    trend_slope_lookback : number of M15 bars used to measure the EMA50 slope;
+                           larger → smoother, less reactive (default 20)
+    use_session_filter   : when True, only emit signals during active trading hours
+                           (session_start_utc..session_end_utc, default True)
+    session_start_utc    : first UTC hour of the active session, inclusive (default 7)
+    session_end_utc      : last  UTC hour of the active session, exclusive (default 21)
+    max_signals_per_day  : global cap on signals per calendar day; 0 = unlimited
+                           (default 2)
     """
 
     def __init__(
@@ -111,15 +119,25 @@ class SDStrategy:
         min_composite_score: float = 5.0,
         signal_cooldown:     int   = 30,
         use_trend_filter:    bool  = True,
+        trend_slope_lookback: int  = 20,
+        use_session_filter:  bool  = True,
+        session_start_utc:   int   = 7,
+        session_end_utc:     int   = 21,
+        max_signals_per_day: int   = 2,
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
-        self.risk_reward          = risk_reward
-        self.min_zone_score       = min_zone_score
-        self.min_wyckoff_score    = min_wyckoff_score
-        self.min_composite_score  = min_composite_score
-        self.signal_cooldown      = signal_cooldown
-        self.use_trend_filter     = use_trend_filter
+        self.risk_reward             = risk_reward
+        self.min_zone_score          = min_zone_score
+        self.min_wyckoff_score       = min_wyckoff_score
+        self.min_composite_score     = min_composite_score
+        self.signal_cooldown         = signal_cooldown
+        self.use_trend_filter        = use_trend_filter
+        self.trend_slope_lookback    = trend_slope_lookback
+        self.use_session_filter      = use_session_filter
+        self.session_start_utc       = session_start_utc
+        self.session_end_utc         = session_end_utc
+        self.max_signals_per_day     = max_signals_per_day
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -157,16 +175,19 @@ class SDStrategy:
         signals: list[SDSignal] = []
         # (formed_at, side, zone_bottom) → last M1 bar index that generated a signal
         _last_signal: dict[tuple, int] = {}
+        # "YYYY-MM-DD" → number of signals emitted that day
+        _daily_count: dict[str, int] = {}
 
         # M15 EMA50 trend filter: only trade in the direction of the trend
         m15_ema50 = m15_df["close"].ewm(span=50, adjust=False).mean()
+        _slope_lb = self.trend_slope_lookback
 
         def _trend_is_bullish(ts: pd.Timestamp) -> bool:
             """Return True when the M15 EMA50 slope is up at timestamp ts."""
             pos = m15_ema50.index.searchsorted(ts, side="right") - 1
-            if pos < 10:
+            if pos < _slope_lb:
                 return False  # not enough M15 history for a reliable slope
-            return float(m15_ema50.iloc[pos]) > float(m15_ema50.iloc[pos - 10])
+            return float(m15_ema50.iloc[pos]) > float(m15_ema50.iloc[pos - _slope_lb])
 
         for i in range(len(m1_df)):
             ts  = m1_df.index[i]
@@ -175,10 +196,21 @@ class SDStrategy:
             # Zones that have already formed by this M1 bar
             formed = [z for z in all_zones if z.formed_at <= ts]
 
-            # Update mitigation / freshness state for all formed zones
+            # Update mitigation / freshness state for all formed zones (always runs)
             self._zones.update_zones(formed, bar, ts)
 
+            # Session filter: skip signal scanning outside active trading hours
+            if self.use_session_filter:
+                if not (self.session_start_utc <= ts.hour < self.session_end_utc):
+                    continue
+
+            date_key = ts.strftime("%Y-%m-%d")
+
             for zone in formed:
+                # Global daily signal cap — once hit, skip remaining zones for this bar
+                if self.max_signals_per_day > 0 and _daily_count.get(date_key, 0) >= self.max_signals_per_day:
+                    break
+
                 if zone.is_mitigated:
                     continue
                 if zone.score.total < self.min_zone_score:
@@ -214,6 +246,7 @@ class SDStrategy:
                     continue
 
                 _last_signal[z_key] = i
+                _daily_count[date_key] = _daily_count.get(date_key, 0) + 1
                 signals.append(sig)
 
         return signals

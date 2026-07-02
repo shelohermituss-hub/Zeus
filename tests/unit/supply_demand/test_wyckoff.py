@@ -343,3 +343,81 @@ class TestScore:
         assert p_fast is not None
         assert p_slow is not None
         assert p_fast.score >= p_slow.score
+
+
+# ── TestMinimumQualityFilters ─────────────────────────────────────────────────
+
+# accum [1.100, 1.110], rng=0.010
+# 20% sweep threshold → min_sweep = 0.002
+# 10% MSS  threshold → min_mss   = 0.001
+
+_WEAK_SPRING_CANDLES = [
+    (1.103, 1.108, 1.100, 1.106),   # 0 accum  low=1.100 ← floor
+    (1.105, 1.109, 1.102, 1.107),   # 1 accum
+    (1.104, 1.110, 1.101, 1.105),   # 2 accum
+    (1.106, 1.109, 1.103, 1.104),   # 3 accum  low > 1.100
+    (1.104, 1.108, 1.0998, 1.106),  # 4 Spring low=1.0998 sweep=0.0002 < 0.002 (2%)
+    (1.108, 1.115, 1.107, 1.113),   # 5 MSS    close=1.113 strength=30%
+]
+
+_WEAK_MSS_CANDLES = [
+    (1.103, 1.108, 1.100, 1.106),   # 0 accum
+    (1.105, 1.109, 1.102, 1.107),   # 1 accum
+    (1.104, 1.110, 1.101, 1.105),   # 2 accum
+    (1.106, 1.109, 1.103, 1.104),   # 3 accum
+    (1.104, 1.108, 1.095,  1.106),  # 4 Spring sweep=50% ✓
+    (1.108, 1.115, 1.107, 1.1101),  # 5 MSS close=1.1101 strength=0.0001 < 0.001 (1%)
+]
+
+_WEAK_SUPPLY_UPTHRUST_CANDLES = [
+    (1.104, 1.108, 1.101, 1.105),   # 0 accum
+    (1.105, 1.109, 1.102, 1.106),   # 1 accum
+    (1.105, 1.110, 1.101, 1.104),   # 2 accum
+    (1.106, 1.109, 1.100, 1.103),   # 3 accum
+    (1.106, 1.1102, 1.103, 1.104),  # 4 Upthrust high=1.1102 sweep=0.0002 < 0.002 (2%)
+    (1.103, 1.104, 1.095,  1.097),  # 5 MSS    close=1.097 < accum_l=1.100
+]
+
+
+class TestMinimumQualityFilters:
+    def test_weak_spring_sweep_returns_none(self):
+        """Spring that barely nicks the accum floor (< 20%) is rejected."""
+        df = _make_df(_WEAK_SPRING_CANDLES)
+        p = WyckoffDetector().detect(df, PivotSide.DEMAND, end_idx=len(df))
+        assert p is None
+
+    def test_weak_spring_sweep_passes_when_threshold_zero(self):
+        """Disabling the sweep threshold allows a tiny spring through."""
+        df = _make_df(_WEAK_SPRING_CANDLES)
+        p = WyckoffDetector(min_spring_sweep_pct=0.0).detect(df, PivotSide.DEMAND, end_idx=len(df))
+        assert p is not None
+
+    def test_weak_mss_strength_returns_none(self):
+        """MSS that barely clears the accum ceiling (< 10%) is rejected."""
+        df = _make_df(_WEAK_MSS_CANDLES)
+        p = WyckoffDetector().detect(df, PivotSide.DEMAND, end_idx=len(df))
+        assert p is None
+
+    def test_weak_mss_strength_passes_when_threshold_zero(self):
+        """Disabling the MSS strength threshold allows a weak MSS through."""
+        df = _make_df(_WEAK_MSS_CANDLES)
+        p = WyckoffDetector(min_mss_strength_pct=0.0).detect(df, PivotSide.DEMAND, end_idx=len(df))
+        assert p is not None
+
+    def test_weak_supply_upthrust_returns_none(self):
+        """Supply upthrust that barely clears accum ceiling (< 20%) is rejected."""
+        df = _make_df(_WEAK_SUPPLY_UPTHRUST_CANDLES)
+        p = WyckoffDetector().detect(df, PivotSide.SUPPLY, end_idx=len(df))
+        assert p is None
+
+    def test_weak_supply_upthrust_passes_when_threshold_zero(self):
+        """Disabling the sweep threshold allows a weak upthrust through."""
+        df = _make_df(_WEAK_SUPPLY_UPTHRUST_CANDLES)
+        p = WyckoffDetector(min_spring_sweep_pct=0.0).detect(df, PivotSide.SUPPLY, end_idx=len(df))
+        assert p is not None
+
+    def test_strong_pattern_unaffected_by_filters(self):
+        """Standard test data (sweep=50%, MSS strength=30%) passes default filters."""
+        df = _make_df(_DEMAND_CANDLES)
+        p = WyckoffDetector().detect(df, PivotSide.DEMAND, end_idx=len(df))
+        assert p is not None

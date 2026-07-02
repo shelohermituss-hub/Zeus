@@ -47,10 +47,12 @@ from .pivot_candle import PivotSide
 
 _MIN_RANGE = 1e-8
 
-DEFAULT_LOOKBACK       = 30
-DEFAULT_MIN_ACCUM      = 3
-DEFAULT_ACCUM_MULT     = 3.0
-DEFAULT_MSS_LOOKBACK   = 10
+DEFAULT_LOOKBACK             = 30
+DEFAULT_MIN_ACCUM            = 3
+DEFAULT_ACCUM_MULT           = 3.0
+DEFAULT_MSS_LOOKBACK         = 10
+DEFAULT_MIN_SPRING_SWEEP_PCT = 0.20   # spring wick must sweep ≥ 20 % of accum range
+DEFAULT_MIN_MSS_STRENGTH_PCT = 0.10   # MSS close must extend ≥ 10 % beyond accum edge
 
 
 # ── Data type ─────────────────────────────────────────────────────────────────
@@ -103,23 +105,29 @@ class WyckoffDetector:
 
     Parameters
     ----------
-    lookback        : max bars to scan backward from end_idx
-    min_accum_bars  : minimum candles required in the accumulation base
-    accum_range_mult: accumulation range must be ≤ mult × mean candle range
-    mss_lookback    : max bars after Spring/Upthrust to expect the MSS
+    lookback             : max bars to scan backward from end_idx
+    min_accum_bars       : minimum candles required in the accumulation base
+    accum_range_mult     : accumulation range must be ≤ mult × mean candle range
+    mss_lookback         : max bars after Spring/Upthrust to expect the MSS
+    min_spring_sweep_pct : minimum spring sweep as a fraction of accum range (default 0.20)
+    min_mss_strength_pct : minimum MSS close extension as a fraction of accum range (default 0.10)
     """
 
     def __init__(
         self,
-        lookback:         int   = DEFAULT_LOOKBACK,
-        min_accum_bars:   int   = DEFAULT_MIN_ACCUM,
-        accum_range_mult: float = DEFAULT_ACCUM_MULT,
-        mss_lookback:     int   = DEFAULT_MSS_LOOKBACK,
+        lookback:             int   = DEFAULT_LOOKBACK,
+        min_accum_bars:       int   = DEFAULT_MIN_ACCUM,
+        accum_range_mult:     float = DEFAULT_ACCUM_MULT,
+        mss_lookback:         int   = DEFAULT_MSS_LOOKBACK,
+        min_spring_sweep_pct: float = DEFAULT_MIN_SPRING_SWEEP_PCT,
+        min_mss_strength_pct: float = DEFAULT_MIN_MSS_STRENGTH_PCT,
     ) -> None:
-        self.lookback         = lookback
-        self.min_accum_bars   = min_accum_bars
-        self.accum_range_mult = accum_range_mult
-        self.mss_lookback     = mss_lookback
+        self.lookback             = lookback
+        self.min_accum_bars       = min_accum_bars
+        self.accum_range_mult     = accum_range_mult
+        self.mss_lookback         = mss_lookback
+        self.min_spring_sweep_pct = min_spring_sweep_pct
+        self.min_mss_strength_pct = min_mss_strength_pct
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -212,15 +220,23 @@ class WyckoffDetector:
             if not ok:
                 continue
 
+            accum_rng  = accum_h - accum_l
+            min_sweep  = self.min_spring_sweep_pct * accum_rng
+            min_mss    = self.min_mss_strength_pct * accum_rng
+
             search_end = min(n, accum_end + self.mss_lookback + 2)
             for si in range(accum_end, search_end - 1):
                 if lows[si] < accum_l and closes[si] > accum_l:
+                    # Spring must sweep the accumulation floor by a meaningful amount
+                    if (accum_l - lows[si]) < min_sweep:
+                        break  # weak spring — try a different accum window
                     # Spring found — look for MSS on the current bar (n-1)
                     for mi in range(si + 1, min(n, si + self.mss_lookback + 1)):
                         if closes[mi] > accum_h:
-                            if mi == n - 1:
+                            # MSS must close significantly beyond the accum ceiling
+                            if mi == n - 1 and (closes[mi] - accum_h) >= min_mss:
                                 return (accum_h, accum_l, accum_end, si, lows[si], mi)
-                            break  # MSS is stale (already fired on a prior bar)
+                            break  # stale MSS or strength too weak
                     break  # one spring candidate per accumulation window
 
         return None
@@ -244,14 +260,21 @@ class WyckoffDetector:
             if not ok:
                 continue
 
+            accum_rng  = accum_h - accum_l
+            min_sweep  = self.min_spring_sweep_pct * accum_rng
+            min_mss    = self.min_mss_strength_pct * accum_rng
+
             search_end = min(n, accum_end + self.mss_lookback + 2)
             for si in range(accum_end, search_end - 1):
                 if highs[si] > accum_h and closes[si] < accum_h:
+                    # Upthrust must breach the accumulation ceiling by a meaningful amount
+                    if (highs[si] - accum_h) < min_sweep:
+                        break  # weak upthrust — try a different accum window
                     for mi in range(si + 1, min(n, si + self.mss_lookback + 1)):
                         if closes[mi] < accum_l:
-                            if mi == n - 1:
+                            if mi == n - 1 and (accum_l - closes[mi]) >= min_mss:
                                 return (accum_h, accum_l, accum_end, si, highs[si], mi)
-                            break  # MSS is stale
+                            break  # stale MSS or strength too weak
                     break
 
         return None

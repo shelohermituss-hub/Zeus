@@ -121,6 +121,7 @@ def _make_strategy(
     mock_wy.detect.side_effect = lambda df, side, end_idx: wyckoff_map.get(end_idx - 1)
 
     kwargs.setdefault("use_trend_filter", False)
+    kwargs.setdefault("use_session_filter", False)
     return SDStrategy(zone_detector=mock_zones, wyckoff_detector=mock_wy, **kwargs)
 
 
@@ -394,6 +395,139 @@ def test_supply_signal_passes_in_downtrend():
     signals = strat.run(m15, m1)
     assert len(signals) == 1
     assert signals[0].direction == "short"
+
+
+# ── Session filter ────────────────────────────────────────────────────────────
+
+def _m1_at_hour(hour_utc: int, n: int = 10, price: float = 1.109) -> pd.DataFrame:
+    """M1 bars starting at a specific UTC hour on 2026-06-01."""
+    start = pd.Timestamp(f"2026-06-01 {hour_utc:02d}:00")
+    idx   = pd.date_range(start, periods=n, freq="1min")
+    return pd.DataFrame(
+        {"open": [price]*n, "high": [price+0.002]*n,
+         "low":  [price-0.002]*n, "close": [price]*n},
+        index=idx,
+    )
+
+
+def test_signal_blocked_outside_session():
+    """Signal at 02:00 UTC is outside session window (07:00–21:00) and must not fire."""
+    zone  = _demand_zone(_T0)
+    m1    = _m1_at_hour(2, n=10)   # 02:00–02:09 UTC
+    strat = _make_strategy(
+        zone,
+        {5: _wy_demand(5, m1.index[5])},
+        use_trend_filter=False,
+        use_session_filter=True,
+        session_start_utc=7,
+        session_end_utc=21,
+    )
+    assert strat.run(_m15_df(), m1) == []
+
+
+def test_signal_passes_inside_session():
+    """Signal at 10:00 UTC is inside session window and must fire normally."""
+    zone = _demand_zone(_T0)
+    m1   = _m1_at_hour(10, n=10)
+    strat = _make_strategy(
+        zone,
+        {5: _wy_demand(5, m1.index[5])},
+        use_trend_filter=False,
+        use_session_filter=True,
+        session_start_utc=7,
+        session_end_utc=21,
+    )
+    signals = strat.run(_m15_df(), m1)
+    assert len(signals) == 1
+
+
+def test_session_filter_disabled_allows_any_hour():
+    """With use_session_filter=False, off-hours signals are not blocked."""
+    zone = _demand_zone(_T0)
+    m1   = _m1_at_hour(2, n=10)
+    strat = _make_strategy(
+        zone,
+        {5: _wy_demand(5, m1.index[5])},
+        use_trend_filter=False,
+        use_session_filter=False,
+    )
+    signals = strat.run(_m15_df(), m1)
+    assert len(signals) == 1
+
+
+# ── Daily signal cap ──────────────────────────────────────────────────────────
+
+def test_daily_cap_blocks_third_signal():
+    """With max_signals_per_day=2, a third signal on the same day is suppressed.
+
+    cooldown=1 lets bars 5, 6, 7 all pass the per-zone cooldown; the daily
+    cap at 2 then blocks bar 7.
+    """
+    zone = _demand_zone(_T0)
+    m1   = _m1_demand(n=20)
+    strat = _make_strategy(
+        zone,
+        {
+            5: _wy_demand(5, m1.index[5]),
+            6: _wy_demand(6, m1.index[6]),
+            7: _wy_demand(7, m1.index[7]),
+        },
+        signal_cooldown=1,
+        max_signals_per_day=2,
+    )
+    signals = strat.run(_m15_df(), m1)
+    assert len(signals) == 2
+    assert signals[0].bar_index == 5
+    assert signals[1].bar_index == 6  # bar 7 blocked by daily cap
+
+
+def test_daily_cap_zero_means_unlimited():
+    """max_signals_per_day=0 means no daily cap — all signals pass."""
+    zone = _demand_zone(_T0)
+    m1   = _m1_demand(n=20)
+    strat = _make_strategy(
+        zone,
+        {
+            5: _wy_demand(5, m1.index[5]),
+            6: _wy_demand(6, m1.index[6]),
+            7: _wy_demand(7, m1.index[7]),
+        },
+        signal_cooldown=1,
+        max_signals_per_day=0,
+    )
+    signals = strat.run(_m15_df(), m1)
+    assert len(signals) == 3
+
+
+def test_daily_cap_resets_on_new_day():
+    """Daily cap resets after midnight — each day has its own budget."""
+    zone = _demand_zone(_T0)
+    # Day 1 (2026-06-01): bars 0–9  → signals at bars 5, 6
+    # Day 2 (2026-06-02): bars 10–19 → signals at bars 15, 16
+    day2 = _T0 + pd.Timedelta("24h")
+    idx  = (
+        list(pd.date_range(_T0 + pd.Timedelta("1min"), periods=10, freq="1min"))
+        + list(pd.date_range(day2 + pd.Timedelta("1min"), periods=10, freq="1min"))
+    )
+    m1 = pd.DataFrame(
+        {"open": [1.109]*20, "high": [1.111]*20,
+         "low":  [1.107]*20, "close": [1.109]*20},
+        index=pd.DatetimeIndex(idx),
+    )
+    wyckoff_map = {
+        5:  _wy_demand(5,  m1.index[5]),
+        6:  _wy_demand(6,  m1.index[6]),
+        7:  _wy_demand(7,  m1.index[7]),   # day 1 bar 7 — should be blocked by daily cap
+        15: _wy_demand(15, m1.index[15]),  # day 2 bar 5 (absolute index 15)
+        16: _wy_demand(16, m1.index[16]),  # day 2 bar 6 (absolute index 16)
+    }
+    strat = _make_strategy(zone, wyckoff_map, signal_cooldown=1, max_signals_per_day=2)
+    signals = strat.run(_m15_df(), m1)
+    assert len(signals) == 4  # 2 per day × 2 days
+    assert signals[0].bar_index == 5
+    assert signals[1].bar_index == 6
+    assert signals[2].bar_index == 15
+    assert signals[3].bar_index == 16
 
 
 # ── Risk validation ───────────────────────────────────────────────────────────
