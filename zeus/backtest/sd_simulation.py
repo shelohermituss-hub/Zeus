@@ -46,8 +46,8 @@ class TradeResult:
     signal:           SDSignal
     entry_price:      float          # effective fill (after spread)
     exit_price:       float          # SL or TP fill price
-    outcome:          Literal["win", "loss"]
-    pnl_r:            float          # R multiples (+3.0 win / -1.0 loss)
+    outcome:          Literal["win", "loss", "scratch"]
+    pnl_r:            float          # R multiples (+3.0 win / -1.0 loss / 0.0 scratch)
     pnl_usd:          float          # USD P&L after spread cost
     spread_cost_usd:  float          # spread cost deducted from P&L
     entry_bar:        int            # M1 bar index of fill
@@ -64,9 +64,14 @@ def simulate_trade(
     equity:       float,
     risk_pct:     float = 0.01,
     spread:       float = SPREAD_PER_OZ,
+    use_be:       bool  = False,
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
+
+    use_be: if True, move SL to break-even (entry price) once the trade
+            reaches +1R in our favour. Trades that then reverse back to
+            entry are closed as "scratch" (0 R, spread cost only).
 
     Returns None if the trade expires (still open at end of data).
     """
@@ -98,19 +103,35 @@ def simulate_trade(
 
     direction_sign = 1.0 if is_long else -1.0
 
+    # BE management state
+    be_active   = False
+    be_trigger  = (effective_entry + sl_dist if is_long else effective_entry - sl_dist)
+    active_sl   = sl
+
     for bar_idx in range(entry_bar, len(m1_df)):
         bar = m1_df.iloc[bar_idx]
         lo  = float(bar["low"])
         hi  = float(bar["high"])
 
-        sl_hit = (lo <= sl) if is_long else (hi >= sl)
-        tp_hit = (hi >= tp) if is_long else (lo <= tp)
+        # Activate BE if +1R reached (pessimistic: check if BE trigger and then
+        # active_sl hit in same bar — BE is assumed to trigger first)
+        if use_be and not be_active:
+            if (hi >= be_trigger if is_long else lo <= be_trigger):
+                be_active = True
+                active_sl = effective_entry  # SL → entry (break-even)
+
+        sl_hit = (lo <= active_sl) if is_long else (hi >= active_sl)
+        tp_hit = (hi >= tp)        if is_long else (lo <= tp)
 
         if sl_hit or tp_hit:
             if sl_hit:
-                exit_price = sl
-                outcome    = "loss"
-                pnl_r      = -1.0
+                exit_price = active_sl
+                if be_active:
+                    outcome = "scratch"
+                    pnl_r   = 0.0
+                else:
+                    outcome = "loss"
+                    pnl_r   = -1.0
             else:
                 exit_price = tp
                 outcome    = "win"
@@ -137,28 +158,55 @@ def simulate_trade(
 
 
 def simulate_all(
-    signals:  list[SDSignal],
-    m1_df:    pd.DataFrame,
-    risk_pct: float = 0.01,
-    spread:   float = SPREAD_PER_OZ,
+    signals:            list[SDSignal],
+    m1_df:              pd.DataFrame,
+    risk_pct:           float = 0.01,
+    spread:             float = SPREAD_PER_OZ,
+    max_daily_losses:   int   = 0,
+    max_monthly_losses: int   = 0,
+    use_be:             bool  = False,
 ) -> tuple[list[TradeResult], int]:
     """
     Simulate all signals sequentially with compounding equity.
 
     Returns (results, n_expired).  Expired trades are counted but excluded
     from the result list because their P&L is unknown.
+
+    max_daily_losses:   stop adding signals on a calendar day after N losses.
+    max_monthly_losses: stop adding signals in a calendar month after N losses.
+    use_be:             enable break-even management at +1R (see simulate_trade).
     """
     results:   list[TradeResult] = []
     n_expired: int               = 0
-    equity = 10_000.0            # caller uses INITIAL_BALANCE separately
+    equity = 10_000.0
+
+    _day_losses:   dict[str, int] = {}
+    _month_losses: dict[str, int] = {}
 
     for sig in signals:
-        result = simulate_trade(sig, m1_df, equity, risk_pct, spread)
+        day_key   = sig.formed_at.strftime("%Y-%m-%d")
+        month_key = sig.formed_at.strftime("%Y-%m")
+
+        if max_monthly_losses > 0 and _month_losses.get(month_key, 0) >= max_monthly_losses:
+            n_expired += 1
+            continue
+
+        if max_daily_losses > 0 and _day_losses.get(day_key, 0) >= max_daily_losses:
+            n_expired += 1
+            continue
+
+        result = simulate_trade(sig, m1_df, equity, risk_pct, spread, use_be)
         if result is None:
             n_expired += 1
             continue
         results.append(result)
         equity += result.pnl_usd
+
+        if result.outcome == "loss":
+            if max_daily_losses > 0:
+                _day_losses[day_key] = _day_losses.get(day_key, 0) + 1
+            if max_monthly_losses > 0:
+                _month_losses[month_key] = _month_losses.get(month_key, 0) + 1
 
     return results, n_expired
 
@@ -172,10 +220,12 @@ def compute_metrics(
     n_expired:       int,
 ) -> dict:
     """Return a dict of standard backtest metrics."""
-    n_trades  = len(results)
-    n_wins    = sum(1 for r in results if r.outcome == "win")
-    n_losses  = n_trades - n_wins
-    win_rate  = n_wins / n_trades * 100 if n_trades else 0.0
+    n_trades   = len(results)
+    n_wins     = sum(1 for r in results if r.outcome == "win")
+    n_losses   = sum(1 for r in results if r.outcome == "loss")
+    n_scratches = n_trades - n_wins - n_losses
+    decided    = n_wins + n_losses   # scratches excluded from WR
+    win_rate   = n_wins / decided * 100 if decided else 0.0
 
     total_r   = sum(r.pnl_r   for r in results)
     total_usd = sum(r.pnl_usd for r in results)
@@ -210,6 +260,7 @@ def compute_metrics(
         n_expired    = n_expired,
         n_wins       = n_wins,
         n_losses     = n_losses,
+        n_scratches  = n_scratches,
         win_rate     = win_rate,
         total_r      = total_r,
         total_usd    = total_usd,

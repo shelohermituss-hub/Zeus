@@ -32,6 +32,29 @@ from .wyckoff import WyckoffDetector, WyckoffPattern
 from .zone_detector import SDZone, ZoneDetector
 
 
+def _compute_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Average Directional Index on the given OHLCV DataFrame."""
+    high  = df["high"]
+    low   = df["low"]
+    close = df["close"]
+    tr    = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low  - close.shift(1)).abs(),
+    ], axis=1).max(axis=1)
+
+    up   = high - high.shift(1)
+    down = low.shift(1) - low
+    dm_plus  = up.where((up > down) & (up > 0),   0.0)
+    dm_minus = down.where((down > up) & (down > 0), 0.0)
+
+    atr      = tr.ewm(span=period, adjust=False).mean()
+    di_plus  = 100 * dm_plus.ewm(span=period,  adjust=False).mean() / atr.replace(0, 1e-10)
+    di_minus = 100 * dm_minus.ewm(span=period, adjust=False).mean() / atr.replace(0, 1e-10)
+    dx       = 100 * (di_plus - di_minus).abs() / (di_plus + di_minus).replace(0, 1e-10)
+    return dx.ewm(span=period, adjust=False).mean()
+
+
 # ── Signal data type ──────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -100,13 +123,18 @@ class SDStrategy:
     use_trend_filter     : when True, demand zones require a bullish M15 EMA50 slope
                            and supply zones require a bearish slope (default True)
     trend_slope_lookback : number of M15 bars used to measure the EMA50 slope;
-                           larger → smoother, less reactive (default 20)
+                           larger → smoother, less reactive (default 8)
+    use_price_above_ema  : when True, also require M15 close > EMA50 for demand
+                           (and close < EMA50 for supply) — harder confirmation
     use_session_filter   : when True, only emit signals during active trading hours
                            (session_start_utc..session_end_utc, default True)
     session_start_utc    : first UTC hour of the active session, inclusive (default 7)
     session_end_utc      : last  UTC hour of the active session, exclusive (default 21)
     max_signals_per_day  : global cap on signals per calendar day; 0 = unlimited
                            (default 2)
+    use_adx_filter       : when True, only emit signals when M15 ADX ≥ adx_min
+    adx_min              : minimum ADX value to trade (default 20.0)
+    adx_period           : ADX smoothing period in M15 bars (default 14)
     """
 
     def __init__(
@@ -119,11 +147,16 @@ class SDStrategy:
         min_composite_score: float = 5.0,
         signal_cooldown:     int   = 30,
         use_trend_filter:    bool  = True,
-        trend_slope_lookback: int  = 20,
+        trend_slope_lookback: int  = 8,
+        use_price_above_ema: bool  = True,
         use_session_filter:  bool  = True,
         session_start_utc:   int   = 7,
         session_end_utc:     int   = 21,
         max_signals_per_day: int   = 2,
+        use_adx_filter:      bool  = False,
+        adx_min:             float = 20.0,
+        adx_period:          int   = 14,
+        first_signal_per_zone: bool = False,
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -134,10 +167,15 @@ class SDStrategy:
         self.signal_cooldown         = signal_cooldown
         self.use_trend_filter        = use_trend_filter
         self.trend_slope_lookback    = trend_slope_lookback
+        self.use_price_above_ema     = use_price_above_ema
         self.use_session_filter      = use_session_filter
         self.session_start_utc       = session_start_utc
         self.session_end_utc         = session_end_utc
         self.max_signals_per_day     = max_signals_per_day
+        self.use_adx_filter          = use_adx_filter
+        self.adx_min                 = adx_min
+        self.adx_period              = adx_period
+        self.first_signal_per_zone   = first_signal_per_zone
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -178,16 +216,36 @@ class SDStrategy:
         # "YYYY-MM-DD" → number of signals emitted that day
         _daily_count: dict[str, int] = {}
 
-        # M15 EMA50 trend filter: only trade in the direction of the trend
-        m15_ema50 = m15_df["close"].ewm(span=50, adjust=False).mean()
-        _slope_lb = self.trend_slope_lookback
+        # M15 EMA50: used for slope (trend direction) and price-position checks
+        m15_ema50  = m15_df["close"].ewm(span=50, adjust=False).mean()
+        _slope_lb  = self.trend_slope_lookback
+
+        # M15 ADX (optional)
+        m15_adx: pd.Series | None = None
+        if self.use_adx_filter:
+            m15_adx = _compute_adx(m15_df, self.adx_period)
 
         def _trend_is_bullish(ts: pd.Timestamp) -> bool:
-            """Return True when the M15 EMA50 slope is up at timestamp ts."""
+            """EMA50 slope is up over slope_lookback M15 bars."""
             pos = m15_ema50.index.searchsorted(ts, side="right") - 1
             if pos < _slope_lb:
-                return False  # not enough M15 history for a reliable slope
+                return False
             return float(m15_ema50.iloc[pos]) > float(m15_ema50.iloc[pos - _slope_lb])
+
+        def _price_above_ema(ts: pd.Timestamp) -> bool:
+            """M15 close is above EMA50 at timestamp ts."""
+            pos = m15_ema50.index.searchsorted(ts, side="right") - 1
+            if pos < 0:
+                return False
+            return float(m15_df["close"].iloc[pos]) > float(m15_ema50.iloc[pos])
+
+        def _adx_ok(ts: pd.Timestamp) -> bool:
+            if m15_adx is None:
+                return True
+            pos = m15_adx.index.searchsorted(ts, side="right") - 1
+            if pos < 0:
+                return False
+            return float(m15_adx.iloc[pos]) >= self.adx_min
 
         for i in range(len(m1_df)):
             ts  = m1_df.index[i]
@@ -220,14 +278,31 @@ class SDStrategy:
 
                 # Trend alignment: demand only in uptrend, supply only in downtrend
                 if self.use_trend_filter:
-                    if zone.side == PivotSide.DEMAND and not _trend_is_bullish(ts):
+                    bullish = _trend_is_bullish(ts)
+                    if zone.side == PivotSide.DEMAND and not bullish:
                         continue
-                    if zone.side == PivotSide.SUPPLY and _trend_is_bullish(ts):
+                    if zone.side == PivotSide.SUPPLY and bullish:
                         continue
+
+                    # Secondary: price must be on the right side of EMA50
+                    if self.use_price_above_ema:
+                        above = _price_above_ema(ts)
+                        if zone.side == PivotSide.DEMAND and not above:
+                            continue
+                        if zone.side == PivotSide.SUPPLY and above:
+                            continue
+
+                # ADX regime filter: skip ranging/choppy markets
+                if self.use_adx_filter and not _adx_ok(ts):
+                    continue
 
                 # Per-zone cooldown: avoid rapid re-entries on the same zone
                 z_key = (zone.formed_at, zone.side, zone.zone_bottom)
                 if i - _last_signal.get(z_key, -(self.signal_cooldown + 1)) < self.signal_cooldown:
+                    continue
+
+                # First-signal-only: once a zone has emitted a signal, skip it forever
+                if self.first_signal_per_zone and z_key in _last_signal:
                     continue
 
                 # Wyckoff confirmation on M1 bars up to and including bar i

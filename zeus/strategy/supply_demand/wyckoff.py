@@ -47,12 +47,13 @@ from .pivot_candle import PivotSide
 
 _MIN_RANGE = 1e-8
 
-DEFAULT_LOOKBACK             = 30
+DEFAULT_LOOKBACK             = 200    # M1 bars to scan backward (was 30 = only 30 min)
 DEFAULT_MIN_ACCUM            = 3
-DEFAULT_ACCUM_MULT           = 3.0
-DEFAULT_MSS_LOOKBACK         = 10
-DEFAULT_MIN_SPRING_SWEEP_PCT = 0.20   # spring wick must sweep ≥ 20 % of accum range
-DEFAULT_MIN_MSS_STRENGTH_PCT = 0.10   # MSS close must extend ≥ 10 % beyond accum edge
+DEFAULT_MAX_ACCUM_BARS       = 20     # cap on accum window size within the lookback
+DEFAULT_ACCUM_MULT           = 6.0    # was 3.0 — wider accum range for M1 gold volatility
+DEFAULT_MSS_LOOKBACK         = 60     # bars after spring to find MSS (was 10 = only 10 min)
+DEFAULT_MIN_SPRING_SWEEP_PCT = 0.05   # was 0.20 — minimal sweep still signals intent
+DEFAULT_MIN_MSS_STRENGTH_PCT = 0.03   # was 0.10 — score rewards strength above this floor
 
 
 # ── Data type ─────────────────────────────────────────────────────────────────
@@ -117,6 +118,7 @@ class WyckoffDetector:
         self,
         lookback:             int   = DEFAULT_LOOKBACK,
         min_accum_bars:       int   = DEFAULT_MIN_ACCUM,
+        max_accum_bars:       int   = DEFAULT_MAX_ACCUM_BARS,
         accum_range_mult:     float = DEFAULT_ACCUM_MULT,
         mss_lookback:         int   = DEFAULT_MSS_LOOKBACK,
         min_spring_sweep_pct: float = DEFAULT_MIN_SPRING_SWEEP_PCT,
@@ -124,6 +126,7 @@ class WyckoffDetector:
     ) -> None:
         self.lookback             = lookback
         self.min_accum_bars       = min_accum_bars
+        self.max_accum_bars       = max_accum_bars
         self.accum_range_mult     = accum_range_mult
         self.mss_lookback         = mss_lookback
         self.min_spring_sweep_pct = min_spring_sweep_pct
@@ -235,7 +238,8 @@ class WyckoffDetector:
                         if closes[mi] > accum_h:
                             # MSS must close significantly beyond the accum ceiling
                             if mi == n - 1 and (closes[mi] - accum_h) >= min_mss:
-                                return (accum_h, accum_l, accum_end, si, lows[si], mi)
+                                actual_len = min(accum_end, self.max_accum_bars)
+                                return (accum_h, accum_l, actual_len, si, lows[si], mi)
                             break  # stale MSS or strength too weak
                     break  # one spring candidate per accumulation window
 
@@ -273,7 +277,8 @@ class WyckoffDetector:
                     for mi in range(si + 1, min(n, si + self.mss_lookback + 1)):
                         if closes[mi] < accum_l:
                             if mi == n - 1 and (accum_l - closes[mi]) >= min_mss:
-                                return (accum_h, accum_l, accum_end, si, highs[si], mi)
+                                actual_len = min(accum_end, self.max_accum_bars)
+                                return (accum_h, accum_l, actual_len, si, highs[si], mi)
                             break  # stale MSS or strength too weak
                     break
 
@@ -286,20 +291,23 @@ class WyckoffDetector:
         accum_end: int,
     ) -> tuple[float, float, bool]:
         """
-        Check whether df[0:accum_end] is a tight accumulation base.
+        Check whether a capped window ending at accum_end forms a tight base.
 
-        Tightness condition: overall range ≤ accum_range_mult × mean candle range.
+        Uses at most max_accum_bars bars so large lookback windows don't require
+        the entire lookback to be tight — only the most recent max_accum_bars bars
+        before the spring need to consolidate.
 
         Returns (accum_high, accum_low, is_tight).
         """
-        accum_h   = float(np.max(highs[:accum_end]))
-        accum_l   = float(np.min(lows[:accum_end]))
+        start     = max(0, accum_end - self.max_accum_bars)
+        accum_h   = float(np.max(highs[start:accum_end]))
+        accum_l   = float(np.min(lows[start:accum_end]))
         accum_rng = accum_h - accum_l
 
         if accum_rng < _MIN_RANGE:
             return accum_h, accum_l, False
 
-        avg_candle = float(np.mean(highs[:accum_end] - lows[:accum_end]))
+        avg_candle = float(np.mean(highs[start:accum_end] - lows[start:accum_end]))
         if avg_candle < _MIN_RANGE:
             return accum_h, accum_l, False
 
