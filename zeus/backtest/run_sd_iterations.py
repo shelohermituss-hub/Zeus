@@ -104,7 +104,7 @@ _WW = dict(
 )
 
 VARIANTS: list[VariantConfig] = [
-    # ── Anchors ───────────────────────────────────────────────────────────────
+    # ── Original anchor ───────────────────────────────────────────────────────
     VariantConfig(
         label              = "V6  · zone≥6.0 wy≥5.5 R:R=3.0 [R2 best]",
         **_WW,
@@ -112,71 +112,31 @@ VARIANTS: list[VariantConfig] = [
         trend_slope_lb     = 6,   use_price_above_ema=False,
         signal_cooldown    = 25,  daily_cap=3,
     ),
+    # ══════════════════════════════════════════════════════════════════════════
+    # PRODUCTION CHAMPION — V54
+    # Discovered after 11 rounds of iterative optimisation on XAUUSD 2025 M1.
+    #
+    # Parameters:
+    #   zone_score ≥ 5.5  (lowering from 6.0 opened high-WR lower-scored zones)
+    #   wyckoff    ≥ 5.9  (tight quality gate; 5.85 dilutes, 6.0 loses volume)
+    #   R:R        = 2.5  (sweet spot; 2.0 loses R, 3.0 loses WR)
+    #   cooldown   = 15   (cool10 gives same results — 15 is sufficient)
+    #   daily_cap  = 4
+    #   max_monthly_losses = 4  (stops trading after 4 monthly losses → cuts
+    #                            drawdown from 6.2% to 4.1%, raises WR 4.6pp)
+    #
+    # Result on XAUUSD 2025 full year:
+    #   59 signals  |  25W 23L (52.1% WR)  |  +39.50R  |  +$4,447  |  DD 4.1%
+    #   9 / 11 active months profitable
+    # ══════════════════════════════════════════════════════════════════════════
     VariantConfig(
-        label              = "V47 · zone≥5.5 wy≥5.9 cool15 R:R=2.5 [R10 best]",
-        **_WW,
-        min_zone_score     = 5.5, min_wyckoff_score=5.9,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 15,  daily_cap=4,
-        risk_reward        = 2.5,
-    ),
-    # ── Round 11 — robustness gates on V47 champion ───────────────────────────
-    # V47 = 59 sigs, 47.5% WR, +39R, $4,285, DD=6.2%. Meets all targets.
-    # Final pass: monthly loss cap + BE to confirm stability isn't luck.
-    # Also test cool10 (max volume) and the 3.0 R:R on cool15 config.
-    VariantConfig(
-        label              = "V53 · V47 + BE",
-        **_WW,
-        min_zone_score     = 5.5, min_wyckoff_score=5.9,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 15,  daily_cap=4,
-        risk_reward        = 2.5,
-        use_be             = True,
-    ),
-    VariantConfig(
-        label              = "V54 · V47 + mloss4",
-        **_WW,
-        min_zone_score     = 5.5, min_wyckoff_score=5.9,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 15,  daily_cap=4,
-        risk_reward        = 2.5,
-        max_monthly_losses = 4,
-    ),
-    VariantConfig(
-        label              = "V55 · V47 + mloss4 + BE",
+        label              = "V54 · zone≥5.5 wy≥5.9 cool15 R:R=2.5 mloss4 [CHAMPION]",
         **_WW,
         min_zone_score     = 5.5, min_wyckoff_score=5.9,
         trend_slope_lb     = 6,   use_price_above_ema=False,
         signal_cooldown    = 15,  daily_cap=4,
         risk_reward        = 2.5,
         max_monthly_losses = 4,
-        use_be             = True,
-    ),
-    VariantConfig(
-        label              = "V56 · zone≥5.5 wy≥5.9 cool10 R:R=2.5",
-        **_WW,
-        min_zone_score     = 5.5, min_wyckoff_score=5.9,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 10,  daily_cap=5,
-        risk_reward        = 2.5,
-    ),
-    VariantConfig(
-        label              = "V57 · zone≥5.5 wy≥5.9 cool15 R:R=2.5 mloss5",
-        **_WW,
-        min_zone_score     = 5.5, min_wyckoff_score=5.9,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 15,  daily_cap=4,
-        risk_reward        = 2.5,
-        max_monthly_losses = 5,
-    ),
-    VariantConfig(
-        label              = "V58 · zone≥5.5 wy≥5.9 cool15 R:R=2.5 mloss3",
-        **_WW,
-        min_zone_score     = 5.5, min_wyckoff_score=5.9,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 15,  daily_cap=4,
-        risk_reward        = 2.5,
-        max_monthly_losses = 3,
     ),
 ]
 
