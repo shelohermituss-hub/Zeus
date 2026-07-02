@@ -94,6 +94,9 @@ class VariantConfig:
     # Asymmetric zone score thresholds (None → uses min_zone_score)
     min_zone_score_long:  Optional[float] = None
     min_zone_score_short: Optional[float] = None
+    # Partial take-profit (tp1_r=0 → disabled; tp2 = risk_reward)
+    tp1_r:    float = 0.0   # first TP in R multiples (e.g., 1.0 = 1R)
+    tp1_size: float = 0.5   # fraction of position to close at TP1
 
 
 # ── Wide Wyckoff base config (reused across rounds) ───────────────────────────
@@ -109,11 +112,106 @@ _WW = dict(
 VARIANTS: list[VariantConfig] = [
     # ── Original anchor ───────────────────────────────────────────────────────
     VariantConfig(
-        label              = "V6  · zone≥6.0 wy≥5.5 R:R=3.0 [R2 best]",
+        label              = "V6  · zone≥6.0 wy≥5.5 R:R=3.0 [anchor]",
         **_WW,
         min_zone_score     = 6.0, min_wyckoff_score=5.5,
         trend_slope_lb     = 6,   use_price_above_ema=False,
         signal_cooldown    = 25,  daily_cap=3,
+    ),
+    # ══════════════════════════════════════════════════════════════════════════
+    # ROUND 13 — Partial TP system + volume boost
+    # Target: WR ≥ 70%, 8-12 signals/month, monthly gain 4-12%
+    #
+    # Approach:
+    #   Partial TP: exit 50% at TP1 (1R), move SL→BE, run 50% to TP2 (2.5R)
+    #   "Win" = TP1 hit (primary target reached, regardless of TP2)
+    #   "Loss" = original SL hit before TP1
+    #
+    # V63: V54 base + TP1=1.0R  → discover WR uplift on current signal set
+    # V64: V54 base + TP1=0.8R  → tighter first target (even higher WR?)
+    # V65: V54 base + TP1=1.2R  → moderate first target
+    # V66: zone≥5.0 wy≥5.9 + TP1=1.0R cool10 daily6  → quality + volume
+    # V67: zone≥5.0 wy≥5.5 + TP1=1.0R cool10 daily6  → more volume
+    # V68: zone≥5.5 wy≥5.5 + TP1=1.0R cool10 daily6  → wider WY gate
+    # V69: zone≥5.0 wy≥5.5 + TP1=1.0R cool10 daily8 no-mloss → max volume
+    # V70: zone≥4.5 wy≥5.5 + TP1=1.0R cool10 daily8 no-mloss → ultra volume
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── Partial TP on V54 signal set ─────────────────────────────────────────
+    VariantConfig(
+        label              = "V63 · V54 + TP1=1.0R (50% exit → BE)",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 1.0,
+    ),
+    VariantConfig(
+        label              = "V64 · V54 + TP1=0.8R (tight first target)",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 0.8,
+    ),
+    VariantConfig(
+        label              = "V65 · V54 + TP1=1.2R",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 1.2,
+    ),
+    # ── Volume boost + TP1=1.0R ───────────────────────────────────────────────
+    VariantConfig(
+        label              = "V66 · zone≥5.0 wy≥5.9 cool10 daily6 TP1=1.0R",
+        **_WW,
+        min_zone_score     = 5.0, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        tp1_r              = 1.0,
+    ),
+    VariantConfig(
+        label              = "V67 · zone≥5.0 wy≥5.5 cool10 daily6 TP1=1.0R",
+        **_WW,
+        min_zone_score     = 5.0, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        tp1_r              = 1.0,
+    ),
+    VariantConfig(
+        label              = "V68 · zone≥5.5 wy≥5.5 cool10 daily6 TP1=1.0R",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        tp1_r              = 1.0,
+    ),
+    VariantConfig(
+        label              = "V69 · zone≥5.0 wy≥5.5 cool10 daily8 TP1=1.0R",
+        **_WW,
+        min_zone_score     = 5.0, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 10,  daily_cap=8,
+        risk_reward        = 2.5,
+        tp1_r              = 1.0,
+    ),
+    VariantConfig(
+        label              = "V70 · zone≥4.5 wy≥5.5 cool10 daily8 TP1=1.0R",
+        **_WW,
+        min_zone_score     = 4.5, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 10,  daily_cap=8,
+        risk_reward        = 2.5,
+        tp1_r              = 1.0,
     ),
     # ══════════════════════════════════════════════════════════════════════════
     # PRODUCTION CHAMPION — V54
@@ -189,6 +287,8 @@ def _run_variant(
         max_daily_losses   = cfg.max_daily_losses,
         max_monthly_losses = cfg.max_monthly_losses,
         use_be             = cfg.use_be,
+        tp1_r              = cfg.tp1_r,
+        tp1_size           = cfg.tp1_size,
     )
     m = compute_metrics(results, INITIAL_BALANCE, len(signals), n_expired)
     return results, m, len(signals)

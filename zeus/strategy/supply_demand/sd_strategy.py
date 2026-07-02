@@ -236,14 +236,12 @@ class SDStrategy:
             m15_adx = _compute_adx(m15_df, self.adx_period)
 
         def _trend_is_bullish(ts: pd.Timestamp) -> bool:
-            """EMA50 slope is up over slope_lookback M15 bars."""
             pos = m15_ema50.index.searchsorted(ts, side="right") - 1
             if pos < _slope_lb:
                 return False
             return float(m15_ema50.iloc[pos]) > float(m15_ema50.iloc[pos - _slope_lb])
 
         def _price_above_ema(ts: pd.Timestamp) -> bool:
-            """M15 close is above EMA50 at timestamp ts."""
             pos = m15_ema50.index.searchsorted(ts, side="right") - 1
             if pos < 0:
                 return False
@@ -257,15 +255,34 @@ class SDStrategy:
                 return False
             return float(m15_adx.iloc[pos]) >= self.adx_min
 
+        # ── Performance: incremental zone accumulation ────────────────────────
+        # Sort zones by formation time so we can accumulate with a single pointer
+        # instead of scanning all_zones on every M1 bar (O(n_zones) → O(1) amort.)
+        _zones_sorted = sorted(all_zones, key=lambda z: z.formed_at)
+        _zone_ptr     = 0
+        active_zones: list = []
+
+        # ── Performance: per-bar Wyckoff cache ───────────────────────────────
+        # WyckoffDetector.detect() result depends only on (bar_index, direction).
+        # Cache it so every zone with the same direction on the same bar reuses
+        # the result without re-scanning 200 M1 bars.
+        # Sentinel value False = "computed but no valid pattern this bar/direction"
+        _wy_cache: dict[tuple, object] = {}
+
+        # ── Performance: per-bar trend cache ─────────────────────────────────
+        _trend_cache: dict[pd.Timestamp, tuple] = {}
+
         for i in range(len(m1_df)):
             ts  = m1_df.index[i]
             bar = m1_df.iloc[i]
 
-            # Zones that have already formed by this M1 bar
-            formed = [z for z in all_zones if z.formed_at <= ts]
+            # Accumulate zones that have formed by this M1 bar
+            while _zone_ptr < len(_zones_sorted) and _zones_sorted[_zone_ptr].formed_at <= ts:
+                active_zones.append(_zones_sorted[_zone_ptr])
+                _zone_ptr += 1
 
-            # Update mitigation / freshness state for all formed zones (always runs)
-            self._zones.update_zones(formed, bar, ts)
+            # Update mitigation / freshness state for all active zones (always runs)
+            self._zones.update_zones(active_zones, bar, ts)
 
             # Session filter: skip signal scanning outside active trading hours
             if self.use_session_filter:
@@ -274,7 +291,11 @@ class SDStrategy:
 
             date_key = ts.strftime("%Y-%m-%d")
 
-            for zone in formed:
+            # Trend & EMA position for this bar (computed once, shared across zones)
+            if self.use_trend_filter and ts not in _trend_cache:
+                _trend_cache[ts] = (_trend_is_bullish(ts), _price_above_ema(ts))
+
+            for zone in active_zones:
                 # Global daily signal cap — once hit, skip remaining zones for this bar
                 if self.max_signals_per_day > 0 and _daily_count.get(date_key, 0) >= self.max_signals_per_day:
                     break
@@ -290,15 +311,12 @@ class SDStrategy:
 
                 # Trend alignment: demand only in uptrend, supply only in downtrend
                 if self.use_trend_filter:
-                    bullish = _trend_is_bullish(ts)
+                    bullish, above = _trend_cache[ts]
                     if zone.side == PivotSide.DEMAND and not bullish:
                         continue
                     if zone.side == PivotSide.SUPPLY and bullish:
                         continue
-
-                    # Secondary: price must be on the right side of EMA50
                     if self.use_price_above_ema:
-                        above = _price_above_ema(ts)
                         if zone.side == PivotSide.DEMAND and not above:
                             continue
                         if zone.side == PivotSide.SUPPLY and above:
@@ -317,14 +335,17 @@ class SDStrategy:
                 if self.first_signal_per_zone and z_key in _last_signal:
                     continue
 
-                # Wyckoff confirmation on M1 bars up to and including bar i
-                wyckoff = self._wyckoff.detect(m1_df, zone.side, end_idx=i + 1)
-                if wyckoff is None:
+                # Wyckoff confirmation — cached per (bar_index, direction)
+                wy_key = (i, zone.side)
+                if wy_key not in _wy_cache:
+                    w = self._wyckoff.detect(m1_df, zone.side, end_idx=i + 1)
+                    if (w is None or w.score < self.min_wyckoff_score or w.mss_bar != i):
+                        _wy_cache[wy_key] = False  # sentinel: no valid pattern
+                    else:
+                        _wy_cache[wy_key] = w
+                wyckoff = _wy_cache[wy_key]
+                if wyckoff is False:
                     continue
-                if wyckoff.score < self.min_wyckoff_score:
-                    continue
-                if wyckoff.mss_bar != i:
-                    continue  # MSS did not fire on the current bar — not actionable yet
 
                 sig = self._build_signal(i, ts, zone, wyckoff, htf_fibs)
                 if sig is None:

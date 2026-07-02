@@ -65,13 +65,21 @@ def simulate_trade(
     risk_pct:     float = 0.01,
     spread:       float = SPREAD_PER_OZ,
     use_be:       bool  = False,
+    tp1_r:        float = 0.0,
+    tp1_size:     float = 0.5,
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
 
-    use_be: if True, move SL to break-even (entry price) once the trade
-            reaches +1R in our favour. Trades that then reverse back to
-            entry are closed as "scratch" (0 R, spread cost only).
+    tp1_r: if > 0 and < signal.risk_reward, partial take-profit at tp1_r × SL-dist.
+           tp1_size fraction of the position exits at TP1; SL moves to break-even;
+           the remainder runs to the full TP (signal.risk_reward × SL-dist).
+           Outcome = "win" whenever TP1 is hit (price moved in our direction).
+           Outcome = "loss" only if original SL is hit before TP1.
+           SL check is always done first (pessimistic convention).
+
+    use_be: if True (and tp1_r == 0), move SL to break-even once +1R is reached.
+            Ignored when tp1_r > 0 (partial TP takes over the BE role).
 
     Returns None if the trade expires (still open at end of data).
     """
@@ -82,7 +90,6 @@ def simulate_trade(
     raw_open = float(m1_df.iloc[entry_bar]["open"])
     is_long   = signal.direction == "long"
 
-    # Apply spread: long buys at ask, short sells at bid
     effective_entry = raw_open + spread if is_long else raw_open - spread
 
     sl = signal.stop_loss
@@ -90,69 +97,78 @@ def simulate_trade(
     if sl_dist < 1e-6:
         return None
 
-    # TP recalculated from effective_entry (not from mss_close)
     tp = (effective_entry + signal.risk_reward * sl_dist if is_long
           else effective_entry - signal.risk_reward * sl_dist)
 
-    # Position size: risk exactly risk_pct × equity per trade
     risk_amount = equity * risk_pct
     size_oz     = risk_amount / sl_dist
-
-    # Spread cost (entry-side only; exit fills at limit/stop so no second spread)
     spread_cost = spread * size_oz
 
-    direction_sign = 1.0 if is_long else -1.0
+    # Classic BE state (used only when tp1_r == 0)
+    be_active  = False
+    be_trigger = (effective_entry + sl_dist if is_long else effective_entry - sl_dist)
+    active_sl  = sl
 
-    # BE management state
-    be_active   = False
-    be_trigger  = (effective_entry + sl_dist if is_long else effective_entry - sl_dist)
-    active_sl   = sl
+    # Partial TP1 state
+    use_tp1  = tp1_r > 0.0 and tp1_r < signal.risk_reward
+    tp1      = ((effective_entry + tp1_r * sl_dist) if is_long
+                else (effective_entry - tp1_r * sl_dist)) if use_tp1 else 0.0
+    tp1_hit  = False
+
+    def _exit(bar_idx: int, exit_px: float, outcome: str, pnl_r: float) -> TradeResult:
+        # raw_pnl = R-multiple × risk_amount  (works for wins, losses, scratches)
+        raw_pnl = size_oz * sl_dist * pnl_r
+        return TradeResult(
+            signal          = signal,
+            entry_price     = round(effective_entry, 5),
+            exit_price      = round(exit_px, 5),
+            outcome         = outcome,
+            pnl_r           = round(pnl_r, 4),
+            pnl_usd         = round(raw_pnl - spread_cost, 2),
+            spread_cost_usd = round(spread_cost, 2),
+            entry_bar       = entry_bar,
+            exit_bar        = bar_idx,
+            bars_held       = bar_idx - entry_bar,
+            equity_at_entry = equity,
+        )
 
     for bar_idx in range(entry_bar, len(m1_df)):
         bar = m1_df.iloc[bar_idx]
         lo  = float(bar["low"])
         hi  = float(bar["high"])
 
-        # Activate BE if +1R reached (pessimistic: check if BE trigger and then
-        # active_sl hit in same bar — BE is assumed to trigger first)
-        if use_be and not be_active:
+        # Classic BE activation (only when partial TP not in use)
+        if use_be and not use_tp1 and not be_active:
             if (hi >= be_trigger if is_long else lo <= be_trigger):
                 be_active = True
-                active_sl = effective_entry  # SL → entry (break-even)
+                active_sl = effective_entry
 
+        # ── SL check (pessimistic: always evaluated first) ────────────────────
         sl_hit = (lo <= active_sl) if is_long else (hi >= active_sl)
-        tp_hit = (hi >= tp)        if is_long else (lo <= tp)
-
-        if sl_hit or tp_hit:
-            if sl_hit:
-                exit_price = active_sl
-                if be_active:
-                    outcome = "scratch"
-                    pnl_r   = 0.0
-                else:
-                    outcome = "loss"
-                    pnl_r   = -1.0
+        if sl_hit:
+            if use_tp1 and tp1_hit:
+                # TP1 was previously hit; remaining position exits at BE (0 P&L)
+                # → count as "win" since primary target was reached
+                return _exit(bar_idx, active_sl, "win", tp1_size * tp1_r)
+            elif be_active:
+                return _exit(bar_idx, active_sl, "scratch", 0.0)
             else:
-                exit_price = tp
-                outcome    = "win"
-                pnl_r      = signal.risk_reward
+                return _exit(bar_idx, active_sl, "loss", -1.0)
 
-            raw_pnl = size_oz * (exit_price - effective_entry) * direction_sign
-            pnl_usd = raw_pnl - spread_cost
+        # ── TP1 check (partial exit, SL moves to BE for remainder) ───────────
+        if use_tp1 and not tp1_hit:
+            if (hi >= tp1 if is_long else lo <= tp1):
+                tp1_hit   = True
+                active_sl = effective_entry  # SL → BE from next evaluation
 
-            return TradeResult(
-                signal          = signal,
-                entry_price     = round(effective_entry, 5),
-                exit_price      = round(exit_price, 5),
-                outcome         = outcome,
-                pnl_r           = pnl_r,
-                pnl_usd         = round(pnl_usd, 2),
-                spread_cost_usd = round(spread_cost, 2),
-                entry_bar       = entry_bar,
-                exit_bar        = bar_idx,
-                bars_held       = bar_idx - entry_bar,
-                equity_at_entry = equity,
-            )
+        # ── TP2 / full TP check ───────────────────────────────────────────────
+        tp_hit = (hi >= tp) if is_long else (lo <= tp)
+        if tp_hit:
+            if use_tp1 and tp1_hit:
+                pnl_r = tp1_size * tp1_r + (1.0 - tp1_size) * signal.risk_reward
+            else:
+                pnl_r = signal.risk_reward
+            return _exit(bar_idx, tp, "win", pnl_r)
 
     return None
 
@@ -165,6 +181,8 @@ def simulate_all(
     max_daily_losses:   int   = 0,
     max_monthly_losses: int   = 0,
     use_be:             bool  = False,
+    tp1_r:              float = 0.0,
+    tp1_size:           float = 0.5,
 ) -> tuple[list[TradeResult], int]:
     """
     Simulate all signals sequentially with compounding equity.
@@ -195,7 +213,7 @@ def simulate_all(
             n_expired += 1
             continue
 
-        result = simulate_trade(sig, m1_df, equity, risk_pct, spread, use_be)
+        result = simulate_trade(sig, m1_df, equity, risk_pct, spread, use_be, tp1_r, tp1_size)
         if result is None:
             n_expired += 1
             continue
