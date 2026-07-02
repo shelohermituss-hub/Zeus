@@ -53,9 +53,10 @@ class FVGSignal:
     """
     Trading signal produced by FVGRetestStrategy.
 
-    Interface-compatible with sd_simulation.simulate_trade():
+    Interface-compatible with sd_simulation.simulate_trade() and compute_metrics():
         direction, entry_price, stop_loss, take_profit, risk_reward,
-        formed_at, bar_index are accessed by the simulation engine.
+        formed_at, bar_index, zone_score are accessed by the simulation engine.
+    zone_score is set to 0.0 (not applicable for FVG; avg_zone metrics will be 0).
     """
     direction:    str            # "long" or "short"
     entry_price:  float          # M15 bar close at signal time
@@ -67,6 +68,7 @@ class FVGSignal:
     fvg_top:      float
     fvg_bottom:   float
     fvg_bar:      int            # bar index where the FVG was detected
+    zone_score:   float = 0.0   # placeholder for compute_metrics compatibility
 
 
 # ── Strategy ─────────────────────────────────────────────────────────────────
