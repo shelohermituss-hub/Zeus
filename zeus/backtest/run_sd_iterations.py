@@ -104,73 +104,81 @@ _WW = dict(
 )
 
 VARIANTS: list[VariantConfig] = [
-    # ── Anchor: best R6 result for comparison ─────────────────────────────────
+    # ── Anchors ───────────────────────────────────────────────────────────────
     VariantConfig(
-        label              = "V6  · zone≥6.0 wy≥5.5 cool25 [R2 best]",
+        label              = "V6  · zone≥6.0 wy≥5.5 R:R=3.0 [R2 best]",
         **_WW,
         min_zone_score     = 6.0, min_wyckoff_score=5.5,
         trend_slope_lb     = 6,   use_price_above_ema=False,
         signal_cooldown    = 25,  daily_cap=3,
     ),
-    # ── Round 7 — R:R exploration + Wyckoff quality lift ─────────────────────
-    # Key insight: firstsig HURTS (removed multi-zone retests have 41% WR).
-    # Hypothesis: lower TP (closer) → more trades hit target → WR rises.
-    # Also test wy≥6.0 (no firstsig) for quality without losing volume.
     VariantConfig(
-        label              = "V24 · V6 R:R=2.0",
-        **_WW,
-        min_zone_score     = 6.0, min_wyckoff_score=5.5,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 25,  daily_cap=3,
-        risk_reward        = 2.0,
-    ),
-    VariantConfig(
-        label              = "V25 · zone≥6.0 wy≥6.0 cool25 R:R=3.0",
-        **_WW,
-        min_zone_score     = 6.0, min_wyckoff_score=6.0,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 25,  daily_cap=3,
-    ),
-    VariantConfig(
-        label              = "V26 · zone≥6.0 wy≥6.0 cool25 R:R=2.0",
-        **_WW,
-        min_zone_score     = 6.0, min_wyckoff_score=6.0,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 25,  daily_cap=3,
-        risk_reward        = 2.0,
-    ),
-    VariantConfig(
-        label              = "V27 · zone≥6.5 wy≥5.5 cool25 R:R=2.0",
+        label              = "V27 · zone≥6.5 wy≥5.5 R:R=2.0 [R7 target✓]",
         **_WW,
         min_zone_score     = 6.5, min_wyckoff_score=5.5,
         trend_slope_lb     = 6,   use_price_above_ema=False,
         signal_cooldown    = 25,  daily_cap=3,
         risk_reward        = 2.0,
     ),
+    # ── Round 8 — R:R=2.5 sweet-spot + volume push on wy≥6.0 ────────────────
+    # V25 (wy≥6.0, R:R=3.0) = 40 sigs, 37.5% WR, +20R — near-miss on WR.
+    # V27 (zone≥6.5, R:R=2.0) = 50 sigs, 40.0% WR, +10R — WR ok but low R.
+    # Goal: find R:R=2.5 zone that gives ≥40% WR, ≥50 sigs, and higher total R.
     VariantConfig(
-        label              = "V28 · V6 R:R=1.5",
-        **_WW,
-        min_zone_score     = 6.0, min_wyckoff_score=5.5,
-        trend_slope_lb     = 6,   use_price_above_ema=False,
-        signal_cooldown    = 25,  daily_cap=3,
-        risk_reward        = 1.5,
-    ),
-    VariantConfig(
-        label              = "V29 · zone≥6.0 wy≥6.0 R:R=1.5",
+        label              = "V31 · zone≥6.0 wy≥6.0 R:R=2.5",
         **_WW,
         min_zone_score     = 6.0, min_wyckoff_score=6.0,
         trend_slope_lb     = 6,   use_price_above_ema=False,
         signal_cooldown    = 25,  daily_cap=3,
-        risk_reward        = 1.5,
+        risk_reward        = 2.5,
     ),
     VariantConfig(
-        label              = "V30 · zone≥6.0 wy≥6.0 R:R=2.0 BE",
+        label              = "V32 · zone≥6.5 wy≥5.5 R:R=2.5",
         **_WW,
-        min_zone_score     = 6.0, min_wyckoff_score=6.0,
+        min_zone_score     = 6.5, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 25,  daily_cap=3,
+        risk_reward        = 2.5,
+    ),
+    VariantConfig(
+        label              = "V33 · zone≥6.5 wy≥6.0 R:R=2.5",
+        **_WW,
+        min_zone_score     = 6.5, min_wyckoff_score=6.0,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 25,  daily_cap=3,
+        risk_reward        = 2.5,
+    ),
+    VariantConfig(
+        label              = "V34 · zone≥6.5 wy≥6.0 R:R=2.0",
+        **_WW,
+        min_zone_score     = 6.5, min_wyckoff_score=6.0,
         trend_slope_lb     = 6,   use_price_above_ema=False,
         signal_cooldown    = 25,  daily_cap=3,
         risk_reward        = 2.0,
-        use_be             = True,
+    ),
+    VariantConfig(
+        label              = "V35 · zone≥6.0 wy≥6.0 cool15 R:R=2.5",
+        **_WW,
+        min_zone_score     = 6.0, min_wyckoff_score=6.0,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+    ),
+    VariantConfig(
+        label              = "V36 · zone≥6.5 wy≥5.5 cool15 R:R=2.5",
+        **_WW,
+        min_zone_score     = 6.5, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+    ),
+    VariantConfig(
+        label              = "V37 · zone≥6.0 wy≥6.0 cool25 cap4 R:R=2.5",
+        **_WW,
+        min_zone_score     = 6.0, min_wyckoff_score=6.0,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 25,  daily_cap=4,
+        risk_reward        = 2.5,
     ),
 ]
 
