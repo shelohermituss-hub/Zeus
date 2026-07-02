@@ -150,6 +150,14 @@ class SDStrategy:
                               None → uses min_wyckoff_score (default None)
     min_wyckoff_score_short : override min_wyckoff_score for supply signals only;
                               None → uses min_wyckoff_score (default None)
+    use_h4_trend_filter  : when True, also require H4 EMA50 slope to agree with the
+                           M15 trend (bullish H4 for longs, bearish for shorts)
+    h4_trend_slope_lb    : number of H4 bars used to measure the EMA50 slope (default 3)
+    use_rsi_filter       : when True, only enter longs when M1 RSI ≤ rsi_oversold
+                           and shorts when M1 RSI ≥ rsi_overbought
+    rsi_period           : RSI smoothing period in M1 bars (default 14)
+    rsi_oversold         : RSI upper bound for long entries (default 35.0)
+    rsi_overbought       : RSI lower bound for short entries (default 65.0)
     max_daily_losses     : stop emitting signals for the rest of a calendar day once
                            this many losses have been incurred that day; 0 = unlimited
     """
@@ -178,6 +186,12 @@ class SDStrategy:
         min_zone_score_short:   Optional[float] = None,
         min_wyckoff_score_long:  Optional[float] = None,
         min_wyckoff_score_short: Optional[float] = None,
+        use_h4_trend_filter:  bool  = False,
+        h4_trend_slope_lb:    int   = 3,
+        use_rsi_filter:       bool  = False,
+        rsi_period:           int   = 14,
+        rsi_oversold:         float = 35.0,
+        rsi_overbought:       float = 65.0,
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -201,6 +215,12 @@ class SDStrategy:
         self.min_zone_score_short    = min_zone_score_short if min_zone_score_short is not None else min_zone_score
         self.min_wyckoff_score_long  = min_wyckoff_score_long  if min_wyckoff_score_long  is not None else min_wyckoff_score
         self.min_wyckoff_score_short = min_wyckoff_score_short if min_wyckoff_score_short is not None else min_wyckoff_score
+        self.use_h4_trend_filter  = use_h4_trend_filter
+        self.h4_trend_slope_lb    = h4_trend_slope_lb
+        self.use_rsi_filter       = use_rsi_filter
+        self.rsi_period           = rsi_period
+        self.rsi_oversold         = rsi_oversold
+        self.rsi_overbought       = rsi_overbought
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -368,6 +388,38 @@ class SDStrategy:
         else:
             _adx_ok_arr = None
 
+        # H4 trend filter (optional) — resample M15 to 4h, align to M1
+        if self.use_h4_trend_filter:
+            h4_df = m15_df.resample("4h", closed="left", label="left").agg(
+                {"open": "first", "high": "max", "low": "min", "close": "last"}
+            ).dropna()
+            h4_ema50   = h4_df["close"].ewm(span=50, adjust=False).mean()
+            _h4_ema_v  = h4_ema50.to_numpy(dtype=float)
+            _lb_h4     = self.h4_trend_slope_lb
+            _h4_ema_p  = np.empty_like(_h4_ema_v)
+            _h4_ema_p[:_lb_h4] = _h4_ema_v[0]
+            _h4_ema_p[_lb_h4:] = _h4_ema_v[:-_lb_h4]
+            _h4_bull_h4 = _h4_ema_v > _h4_ema_p
+            _h4_bull_h4[:_lb_h4] = False
+            m1_to_h4    = np.searchsorted(h4_df.index.values, _m1_ts_vals, side="right") - 1
+            m1_to_h4    = np.clip(m1_to_h4, 0, len(h4_df) - 1)
+            _h4_trend_bull: np.ndarray | None = _h4_bull_h4[m1_to_h4]
+        else:
+            _h4_trend_bull = None
+
+        # RSI filter (optional) — vectorised Wilder EMA on M1 closes
+        if self.use_rsi_filter:
+            delta    = np.diff(_m1_closes, prepend=_m1_closes[0])
+            gains    = np.maximum(delta, 0.0)
+            losses   = np.maximum(-delta, 0.0)
+            _rsi_alpha = 1.0 / self.rsi_period
+            _g_ema   = pd.Series(gains).ewm(alpha=_rsi_alpha, adjust=False).mean().to_numpy()
+            _l_ema   = pd.Series(losses).ewm(alpha=_rsi_alpha, adjust=False).mean().to_numpy()
+            _rs      = np.where(_l_ema > 0, _g_ema / _l_ema, 100.0)
+            _m1_rsi: np.ndarray | None = 100.0 - 100.0 / (1.0 + _rs)
+        else:
+            _m1_rsi = None
+
         # ── Wyckoff cache ─────────────────────────────────────────────────────
         _wy_cache: dict[tuple, object] = {}
 
@@ -438,6 +490,20 @@ class SDStrategy:
             # Iterate only over the few candidate zone indices
             for j in int_iter(candidates):
                 zone = _zones_sorted[j]
+                is_demand = zone.side == PivotSide.DEMAND
+
+                # H4 trend must agree with zone direction
+                if _h4_trend_bull is not None:
+                    if bool(_h4_trend_bull[i]) != is_demand:
+                        continue
+
+                # RSI filter: longs need oversold M1 RSI, shorts need overbought
+                if _m1_rsi is not None:
+                    rsi_val = float(_m1_rsi[i])
+                    if is_demand and rsi_val >= self.rsi_oversold:
+                        continue
+                    if not is_demand and rsi_val <= self.rsi_overbought:
+                        continue
 
                 # Per-zone cooldown
                 z_key = (zone.formed_at, zone.side, zone.zone_bottom)
