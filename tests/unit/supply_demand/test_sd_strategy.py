@@ -119,6 +119,7 @@ def _make_strategy(
 
     mock_wy = MagicMock()
     mock_wy.detect.side_effect = lambda df, side, end_idx: wyckoff_map.get(end_idx - 1)
+    mock_wy.detect_fast.side_effect = lambda h, l, c, o, idx, side, end_idx: wyckoff_map.get(end_idx - 1)
 
     kwargs.setdefault("use_trend_filter", False)
     kwargs.setdefault("use_session_filter", False)
@@ -187,10 +188,12 @@ def test_signal_score_fields():
     zone = _demand_zone(_T0)
     m1   = _m1_demand()
     sig  = _make_strategy(zone, {5: _wy_demand(5, m1.index[5])}).run(_m15_df(), m1)[0]
-    assert sig.zone_score      == round(7.5, 2)
+    # Zone is touched (price in zone) from bar 0 onward → fresh drops 2.0 → 1.0
+    # zone_score = bos(2.0) + impulse(1.5) + time(2.0) + fresh(1.0) + sweep(0.0) = 6.5
+    assert sig.zone_score      == round(6.5, 2)
     assert sig.wyckoff_score   == round(7.5, 2)
     assert sig.fib_bonus       == 0.0
-    assert sig.composite_score == round(7.5, 2)
+    assert sig.composite_score == round(6.5, 2)
 
 
 def test_signal_references_zone_and_wyckoff():
@@ -323,7 +326,7 @@ def test_fib_bonus_added_to_composite():
 # ── Composite score filter ────────────────────────────────────────────────────
 
 def test_no_signal_below_min_composite_score():
-    zone = _demand_zone(_T0)   # zone_score=7.5, fib_bonus=0 → composite=7.5
+    zone = _demand_zone(_T0)   # zone_score=6.5 at signal time, fib_bonus=0 → composite=6.5
     m1   = _m1_demand()
     strat = _make_strategy(zone, {5: _wy_demand(5, m1.index[5])}, min_composite_score=9.0)
     assert strat.run(_m15_df(), m1) == []

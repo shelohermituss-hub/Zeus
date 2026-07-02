@@ -40,6 +40,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from numpy.lib.stride_tricks import sliding_window_view
 
 from .pivot_candle import PivotSide
 
@@ -199,7 +200,228 @@ class WyckoffDetector:
             formed_at     = df.index[start + mi],
         )
 
+    # ── Public (fast path) ────────────────────────────────────────────────────
+
+    def detect_fast(
+        self,
+        h_arr:    np.ndarray,
+        l_arr:    np.ndarray,
+        c_arr:    np.ndarray,
+        o_arr:    np.ndarray,
+        df_index: "pd.Index",
+        side:     PivotSide,
+        end_idx:  int,
+    ) -> Optional[WyckoffPattern]:
+        """
+        Fast variant of detect(): accepts pre-extracted numpy arrays.
+
+        Avoids repeated DataFrame .iloc slicing in the hot back-test loop.
+        Pre-computes rolling max/min/mean once, making _check_accum O(1).
+        """
+        if side == PivotSide.DOJI:
+            return None
+
+        start   = max(0, end_idx - self.lookback)
+        n_slice = end_idx - start
+
+        if n_slice < self.min_accum_bars + 2:
+            return None
+
+        highs  = h_arr[start:end_idx]
+        lows   = l_arr[start:end_idx]
+        closes = c_arr[start:end_idx]
+        opens  = o_arr[start:end_idx]
+
+        roll_h, roll_l, roll_a = self._precompute_rolling(highs, lows)
+
+        if side == PivotSide.DEMAND:
+            result = self._scan_demand_fast(highs, lows, closes, n_slice, roll_h, roll_l, roll_a)
+        else:
+            result = self._scan_supply_fast(highs, lows, closes, n_slice, roll_h, roll_l, roll_a)
+
+        if result is None:
+            return None
+
+        accum_h, accum_l, accum_cnt, si, manip_ext, mi = result
+
+        score = self._score(
+            side, accum_h, accum_l, accum_cnt,
+            highs, lows, closes, opens, si, mi,
+        )
+
+        return WyckoffPattern(
+            side          = side,
+            accum_high    = round(accum_h, 6),
+            accum_low     = round(accum_l, 6),
+            accum_bars    = accum_cnt,
+            manip_bar     = start + si,
+            manip_extreme = round(manip_ext, 6),
+            mss_bar       = start + mi,
+            mss_close     = round(float(closes[mi]), 6),
+            score         = round(score, 2),
+            formed_at     = df_index[start + mi],
+        )
+
     # ── Private: scanning ─────────────────────────────────────────────────────
+
+    def _precompute_rolling(
+        self,
+        highs: np.ndarray,
+        lows:  np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Rolling max/min/mean over max_accum_bars.
+
+        Head (first _w-1 positions): growing window from bar 0 via cumulative ops.
+        Tail (positions _w-1 to n-1): fixed _w-element window via stride tricks.
+        Much faster than pandas rolling for small n (typical n ≈ 200).
+        """
+        _w     = self.max_accum_bars
+        n      = len(highs)
+        ranges = highs - lows
+
+        roll_h = np.empty(n)
+        roll_l = np.empty(n)
+        roll_a = np.empty(n)
+
+        # Head: growing window [0:k+1] for k = 0 .. min(_w-1, n) - 1
+        h = min(_w - 1, n)
+        if h > 0:
+            roll_h[:h] = np.maximum.accumulate(highs[:h])
+            roll_l[:h] = np.minimum.accumulate(lows[:h])
+            roll_a[:h] = np.cumsum(ranges[:h]) / np.arange(1, h + 1, dtype=float)
+
+        # Tail: fixed _w-element window using zero-copy stride tricks
+        if n >= _w:
+            roll_h[_w - 1:] = sliding_window_view(highs,  _w).max(axis=1)
+            roll_l[_w - 1:] = sliding_window_view(lows,   _w).min(axis=1)
+            roll_a[_w - 1:] = sliding_window_view(ranges, _w).mean(axis=1)
+
+        return roll_h, roll_l, roll_a
+
+    def _scan_demand_fast(
+        self,
+        highs:  np.ndarray,
+        lows:   np.ndarray,
+        closes: np.ndarray,
+        n:      int,
+        roll_h: np.ndarray,
+        roll_l: np.ndarray,
+        roll_a: np.ndarray,
+    ) -> Optional[tuple]:
+        """_scan_demand with vectorized pre-filter + precomputed rolling stats.
+
+        Two-stage: numpy vectorization eliminates windows that can't yield a
+        valid MSS-at-n-1 pattern; Python loop only runs on survivors.
+        """
+        min_mult   = self.accum_range_mult
+        min_sw     = self.min_spring_sweep_pct
+        min_ms     = self.min_mss_strength_pct
+        mss_lb     = self.mss_lookback
+        mss_close  = closes[n - 1]
+
+        # Minimum accum_end such that a spring can reach MSS at bar n-1:
+        #   spring si must satisfy  si + mss_lb >= n-1  →  si >= n-1-mss_lb
+        #   spring search starts at accum_end  →  accum_end <= n-1-mss_lb
+        #   but spring search reaches si up to accum_end + mss_lb + 1
+        #   so: accum_end + mss_lb + 1 >= n-1-mss_lb  →  accum_end >= n-2-2*mss_lb
+        ae_lo = max(self.min_accum_bars - 1, n - 2 - 2 * mss_lb)
+        ae_hi = n - 3   # accum_end <= n-2  →  ae <= n-3
+        if ae_hi < ae_lo:
+            return None
+
+        ae_idx = np.arange(ae_lo, ae_hi + 1)
+        _h  = roll_h[ae_idx]
+        _l  = roll_l[ae_idx]
+        _a  = roll_a[ae_idx]
+        _r  = _h - _l
+
+        tight   = (_r >= _MIN_RANGE) & (_a >= _MIN_RANGE) & (_r <= min_mult * _a)
+        can_mss = (mss_close > _h) & ((mss_close - _h) >= min_ms * _r)
+        valid   = tight & can_mss
+        if not valid.any():
+            return None
+
+        for ae in ae_idx[valid][::-1]:          # most-recent first
+            accum_end  = int(ae) + 1
+            accum_h    = float(roll_h[ae])
+            accum_l    = float(roll_l[ae])
+            accum_rng  = accum_h - accum_l
+            min_sweep  = min_sw * accum_rng
+            min_mss_v  = min_ms * accum_rng
+            search_end = min(n, accum_end + mss_lb + 2)
+
+            for si in range(accum_end, search_end - 1):
+                if lows[si] < accum_l and closes[si] > accum_l:
+                    if (accum_l - lows[si]) < min_sweep:
+                        break
+                    for mi in range(si + 1, min(n, si + mss_lb + 1)):
+                        if closes[mi] > accum_h:
+                            if mi == n - 1 and (closes[mi] - accum_h) >= min_mss_v:
+                                return (accum_h, accum_l,
+                                        min(accum_end, self.max_accum_bars),
+                                        si, lows[si], mi)
+                            break
+                    break
+
+        return None
+
+    def _scan_supply_fast(
+        self,
+        highs:  np.ndarray,
+        lows:   np.ndarray,
+        closes: np.ndarray,
+        n:      int,
+        roll_h: np.ndarray,
+        roll_l: np.ndarray,
+        roll_a: np.ndarray,
+    ) -> Optional[tuple]:
+        """_scan_supply with vectorized pre-filter + precomputed rolling stats."""
+        min_mult   = self.accum_range_mult
+        min_sw     = self.min_spring_sweep_pct
+        min_ms     = self.min_mss_strength_pct
+        mss_lb     = self.mss_lookback
+        mss_close  = closes[n - 1]
+
+        ae_lo = max(self.min_accum_bars - 1, n - 2 - 2 * mss_lb)
+        ae_hi = n - 3
+        if ae_hi < ae_lo:
+            return None
+
+        ae_idx = np.arange(ae_lo, ae_hi + 1)
+        _h  = roll_h[ae_idx]
+        _l  = roll_l[ae_idx]
+        _a  = roll_a[ae_idx]
+        _r  = _h - _l
+
+        tight   = (_r >= _MIN_RANGE) & (_a >= _MIN_RANGE) & (_r <= min_mult * _a)
+        can_mss = (mss_close < _l) & ((_l - mss_close) >= min_ms * _r)
+        valid   = tight & can_mss
+        if not valid.any():
+            return None
+
+        for ae in ae_idx[valid][::-1]:
+            accum_end  = int(ae) + 1
+            accum_h    = float(roll_h[ae])
+            accum_l    = float(roll_l[ae])
+            accum_rng  = accum_h - accum_l
+            min_sweep  = min_sw * accum_rng
+            min_mss_v  = min_ms * accum_rng
+            search_end = min(n, accum_end + mss_lb + 2)
+
+            for si in range(accum_end, search_end - 1):
+                if highs[si] > accum_h and closes[si] < accum_h:
+                    if (highs[si] - accum_h) < min_sweep:
+                        break
+                    for mi in range(si + 1, min(n, si + mss_lb + 1)):
+                        if closes[mi] < accum_l:
+                            if mi == n - 1 and (accum_l - closes[mi]) >= min_mss_v:
+                                return (accum_h, accum_l,
+                                        min(accum_end, self.max_accum_bars),
+                                        si, highs[si], mi)
+                            break
+                    break
+
+        return None
 
     def _scan_demand(
         self,

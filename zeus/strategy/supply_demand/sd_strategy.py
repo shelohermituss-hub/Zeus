@@ -21,15 +21,22 @@ The strategy outputs SL/TP levels only.
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from .fibonacci import FibConfluence, FibLevels, zone_fib_confluence
 from .pivot_candle import PivotSide
 from .wyckoff import WyckoffDetector, WyckoffPattern
-from .zone_detector import SDZone, ZoneDetector
+from .zone_detector import SDZone, ZoneDetector, ZoneScore
+
+
+def int_iter(bool_arr: np.ndarray):
+    """Yield integer indices where bool_arr is True (avoids np.where overhead)."""
+    return np.flatnonzero(bool_arr)
 
 
 def _compute_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -191,9 +198,10 @@ class SDStrategy:
 
     def run(
         self,
-        m15_df:   pd.DataFrame,
-        m1_df:    pd.DataFrame,
-        htf_fibs: Optional[FibLevels] = None,
+        m15_df:              pd.DataFrame,
+        m1_df:               pd.DataFrame,
+        htf_fibs:            Optional[FibLevels] = None,
+        pre_detected_zones:  Optional[list]      = None,
     ) -> list[SDSignal]:
         """
         Full historical backtest: detect M15 zones → iterate M1 bars for signals.
@@ -216,7 +224,11 @@ class SDStrategy:
         by only making a zone visible once its formed_at timestamp has passed on
         the M1 timeline (``zone.formed_at <= m1_bar_timestamp``).
         """
-        all_zones = self._zones.detect_zones(m15_df)
+        # Zone detection: accept pre-computed zones (saves ~10s per variant in batch runs)
+        if pre_detected_zones is not None:
+            all_zones = copy.deepcopy(pre_detected_zones)
+        else:
+            all_zones = self._zones.detect_zones(m15_df)
         if not all_zones:
             return []
 
@@ -255,97 +267,199 @@ class SDStrategy:
                 return False
             return float(m15_adx.iloc[pos]) >= self.adx_min
 
-        # ── Performance: incremental zone accumulation ────────────────────────
-        # Sort zones by formation time so we can accumulate with a single pointer
-        # instead of scanning all_zones on every M1 bar (O(n_zones) → O(1) amort.)
+        # ── Zone geometry arrays ──────────────────────────────────────────────
         _zones_sorted = sorted(all_zones, key=lambda z: z.formed_at)
-        _zone_ptr     = 0
-        active_zones: list = []
+        n_zones_total = len(_zones_sorted)
 
-        # ── Performance: per-bar Wyckoff cache ───────────────────────────────
-        # WyckoffDetector.detect() result depends only on (bar_index, direction).
-        # Cache it so every zone with the same direction on the same bar reuses
-        # the result without re-scanning 200 M1 bars.
-        # Sentinel value False = "computed but no valid pattern this bar/direction"
+        _zt  = np.array([z.zone_top     for z in _zones_sorted], dtype=float)
+        _zb  = np.array([z.zone_bottom  for z in _zones_sorted], dtype=float)
+        _we  = np.array([z.wick_extreme for z in _zones_sorted], dtype=float)
+        _dem = np.array([z.side == PivotSide.DEMAND for z in _zones_sorted], dtype=bool)
+        _bnf = np.array([z.score.total - z.score.fresh for z in _zones_sorted], dtype=float)
+        # Current freshness and mitigation can differ from defaults when pre_detected_zones
+        # carries non-fresh state or tests inject custom fixtures.
+        _init_fresh = np.array([z.score.fresh  for z in _zones_sorted], dtype=float)
+        _init_mit   = np.array([z.is_mitigated for z in _zones_sorted], dtype=bool)
+
+        # Precompute M1 price columns as plain numpy arrays (avoids per-bar pandas overhead)
+        _m1_lows   = m1_df["low"].to_numpy(dtype=float)
+        _m1_highs  = m1_df["high"].to_numpy(dtype=float)
+        _m1_closes = m1_df["close"].to_numpy(dtype=float)
+        _m1_opens  = m1_df["open"].to_numpy(dtype=float)
+        _m1_index  = m1_df.index
+        n_m1       = len(m1_df)
+
+        # Bar index at which each zone becomes active (first M1 bar with ts > formed_at)
+        _zone_formed_ns = np.array(
+            [z.formed_at.value for z in _zones_sorted], dtype="datetime64[ns]"
+        )
+        _zone_active_from = np.searchsorted(m1_df.index.values, _zone_formed_ns, side="right")
+
+        # ── PASS 1: vectorized zone state precomputation ──────────────────────
+        # For each zone, find:
+        #   first_touch_idx: first M1 bar where price enters the zone body → fresh 2→1
+        #   mit_idx:         first M1 bar where close passes through wick   → zone dead
+        # These are the only events that affect zone score.
+        INF = n_m1  # sentinel: event never happens
+        _first_touch_idx = np.full(n_zones_total, INF, dtype=np.int64)
+        _mit_idx         = np.full(n_zones_total, INF, dtype=np.int64)
+
+        for j in range(n_zones_total):
+            start = int(_zone_active_from[j])
+            if start >= n_m1:
+                continue
+            if _init_mit[j]:
+                _mit_idx[j] = -1  # already mitigated before any M1 bar
+                continue
+
+            lo_sl = _m1_lows[start:]
+            hi_sl = _m1_highs[start:]
+            cl_sl = _m1_closes[start:]
+
+            top = _zt[j]; bot = _zb[j]; we = _we[j]
+            in_zone = (lo_sl <= top) & (hi_sl >= bot)
+
+            # First bar where price enters zone body
+            idx_local = int(np.argmax(in_zone)) if in_zone.any() else -1
+            if idx_local < 0:
+                continue  # zone never touched within M1 data
+            _first_touch_idx[j] = start + idx_local
+
+            # First bar where close passes through wick (mitigation)
+            if _dem[j]:
+                mit_mask = in_zone & (cl_sl < we)
+            else:
+                mit_mask = in_zone & (cl_sl > we)
+            if mit_mask.any():
+                _mit_idx[j] = start + int(np.argmax(mit_mask))
+
+            # Honor pre-existing state (zone already touched before our M1 window)
+            if _init_fresh[j] < 2.0 and _first_touch_idx[j] == INF:
+                _first_touch_idx[j] = 0  # treat as first-touch before bar 0
+
+        # ── Precompute per-bar arrays to avoid pandas overhead in loop ────────
+        _m1_hours   = m1_df.index.hour                        # int array
+        _m1_ts_vals = m1_df.index.values                      # int64 nanoseconds
+
+        # Precompute trend as M1-aligned boolean arrays (avoids per-bar searchsorted)
+        m1_to_m15 = np.searchsorted(m15_df.index.values, _m1_ts_vals, side="right") - 1
+        m1_to_m15 = np.clip(m1_to_m15, 0, len(m15_df) - 1)
+        _ema50_vals  = m15_ema50.to_numpy(dtype=float)
+        _ema50_prev  = np.empty_like(_ema50_vals)
+        _ema50_prev[:_slope_lb] = _ema50_vals[0]
+        _ema50_prev[_slope_lb:] = _ema50_vals[:-_slope_lb]
+        _trend_bull_m15 = (_ema50_vals > _ema50_prev)
+        _trend_bull_m15[:_slope_lb] = False
+        _trend_bull = _trend_bull_m15[m1_to_m15]               # M1-aligned
+        _close_m15  = m15_df["close"].to_numpy(dtype=float)
+        _above_ema  = (_close_m15 > _ema50_vals)[m1_to_m15]    # M1-aligned
+
+        if self.use_adx_filter and m15_adx is not None:
+            _adx_vals   = m15_adx.to_numpy(dtype=float)
+            _adx_ok_arr = (_adx_vals >= self.adx_min)[m1_to_m15]
+        else:
+            _adx_ok_arr = None
+
+        # ── Wyckoff cache ─────────────────────────────────────────────────────
         _wy_cache: dict[tuple, object] = {}
 
-        # ── Performance: per-bar trend cache ─────────────────────────────────
-        _trend_cache: dict[pd.Timestamp, tuple] = {}
+        # Precompute date keys to avoid strftime overhead in the hot loop
+        _m1_date_keys = np.array(m1_df.index.date)
 
-        for i in range(len(m1_df)):
-            ts  = m1_df.index[i]
-            bar = m1_df.iloc[i]
+        # ── PASS 2: iterate M1 bars — O(n_bars) with O(1) zone lookups ───────
+        for i in range(n_m1):
+            # Session filter
+            if self.use_session_filter and not (
+                self.session_start_utc <= _m1_hours[i] < self.session_end_utc
+            ):
+                continue
 
-            # Accumulate zones that have formed by this M1 bar
-            while _zone_ptr < len(_zones_sorted) and _zones_sorted[_zone_ptr].formed_at <= ts:
-                active_zones.append(_zones_sorted[_zone_ptr])
-                _zone_ptr += 1
+            date_key = _m1_date_keys[i]
 
-            # Update mitigation / freshness state for all active zones (always runs)
-            self._zones.update_zones(active_zones, bar, ts)
+            if self.max_signals_per_day > 0 and _daily_count.get(date_key, 0) >= self.max_signals_per_day:
+                continue
 
-            # Session filter: skip signal scanning outside active trading hours
-            if self.use_session_filter:
-                if not (self.session_start_utc <= ts.hour < self.session_end_utc):
-                    continue
+            lo = _m1_lows[i]; hi = _m1_highs[i]
 
-            date_key = ts.strftime("%Y-%m-%d")
+            # ── Zone score lookup (O(n_zones) but pure numpy) ─────────────────
+            # Zone is "active" at bar i if: active_from[j] <= i < mit_idx[j]
+            active = (_zone_active_from <= i) & (i < _mit_idx)
+            if not active.any():
+                continue
 
-            # Trend & EMA position for this bar (computed once, shared across zones)
-            if self.use_trend_filter and ts not in _trend_cache:
-                _trend_cache[ts] = (_trend_is_bullish(ts), _price_above_ema(ts))
+            # Freshness at bar i:
+            #   _init_fresh  if zone not yet touched  (i < first_touch_idx)
+            #   1.0          if touched but not mitigated
+            # _first_touch_idx=0 covers pre-existing "already touched" state
+            fresh = np.where(i < _first_touch_idx, _init_fresh, 1.0)
 
-            for zone in active_zones:
-                # Global daily signal cap — once hit, skip remaining zones for this bar
-                if self.max_signals_per_day > 0 and _daily_count.get(date_key, 0) >= self.max_signals_per_day:
-                    break
+            cur_scores = _bnf + fresh
 
-                if zone.is_mitigated:
-                    continue
-                # Asymmetric zone score: demand and supply can have different floors
-                _min_zsc = self.min_zone_score_long if zone.side == PivotSide.DEMAND else self.min_zone_score_short
-                if zone.score.total < _min_zsc:
-                    continue
-                if not zone.price_in_zone(float(bar["low"]), float(bar["high"])):
-                    continue
+            # Price in zone body
+            in_zone = active & (lo <= _zt) & (hi >= _zb)
 
-                # Trend alignment: demand only in uptrend, supply only in downtrend
-                if self.use_trend_filter:
-                    bullish, above = _trend_cache[ts]
-                    if zone.side == PivotSide.DEMAND and not bullish:
+            # Zone score filter (asymmetric)
+            score_ok = (
+                (_dem & (cur_scores >= self.min_zone_score_long))
+                | (~_dem & (cur_scores >= self.min_zone_score_short))
+            )
+            candidates = in_zone & score_ok
+            if not candidates.any():
+                continue
+
+            # Trend filter
+            if self.use_trend_filter:
+                bullish = bool(_trend_bull[i])
+                above   = bool(_above_ema[i])
+                if bullish:
+                    candidates &= _dem
+                else:
+                    candidates &= ~_dem
+                if self.use_price_above_ema:
+                    if (bullish and not above) or (not bullish and above):
                         continue
-                    if zone.side == PivotSide.SUPPLY and bullish:
-                        continue
-                    if self.use_price_above_ema:
-                        if zone.side == PivotSide.DEMAND and not above:
-                            continue
-                        if zone.side == PivotSide.SUPPLY and above:
-                            continue
+            if not candidates.any():
+                continue
 
-                # ADX regime filter: skip ranging/choppy markets
-                if self.use_adx_filter and not _adx_ok(ts):
-                    continue
+            if _adx_ok_arr is not None and not _adx_ok_arr[i]:
+                continue
 
-                # Per-zone cooldown: avoid rapid re-entries on the same zone
+            # Resolve timestamp once (after all cheap filters pass)
+            ts = _m1_index[i]
+
+            # Iterate only over the few candidate zone indices
+            for j in int_iter(candidates):
+                zone = _zones_sorted[j]
+
+                # Per-zone cooldown
                 z_key = (zone.formed_at, zone.side, zone.zone_bottom)
                 if i - _last_signal.get(z_key, -(self.signal_cooldown + 1)) < self.signal_cooldown:
                     continue
-
-                # First-signal-only: once a zone has emitted a signal, skip it forever
                 if self.first_signal_per_zone and z_key in _last_signal:
                     continue
 
                 # Wyckoff confirmation — cached per (bar_index, direction)
                 wy_key = (i, zone.side)
                 if wy_key not in _wy_cache:
-                    w = self._wyckoff.detect(m1_df, zone.side, end_idx=i + 1)
+                    w = self._wyckoff.detect_fast(
+                        _m1_highs, _m1_lows, _m1_closes, _m1_opens,
+                        _m1_index, zone.side, end_idx=i + 1,
+                    )
                     if (w is None or w.score < self.min_wyckoff_score or w.mss_bar != i):
-                        _wy_cache[wy_key] = False  # sentinel: no valid pattern
+                        _wy_cache[wy_key] = False
                     else:
                         _wy_cache[wy_key] = w
                 wyckoff = _wy_cache[wy_key]
                 if wyckoff is False:
                     continue
+
+                # Sync zone score to current state before building signal
+                cur_fresh = float(fresh[j])
+                if zone.score.fresh != cur_fresh:
+                    zone.score = ZoneScore(
+                        bos=zone.score.bos, impulse=zone.score.impulse,
+                        time=zone.score.time, fresh=cur_fresh, sweep=zone.score.sweep,
+                    )
 
                 sig = self._build_signal(i, ts, zone, wyckoff, htf_fibs)
                 if sig is None:
@@ -356,6 +470,9 @@ class SDStrategy:
                 _last_signal[z_key] = i
                 _daily_count[date_key] = _daily_count.get(date_key, 0) + 1
                 signals.append(sig)
+
+                if self.max_signals_per_day > 0 and _daily_count[date_key] >= self.max_signals_per_day:
+                    break
 
         return signals
 
