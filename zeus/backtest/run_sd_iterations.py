@@ -214,6 +214,209 @@ VARIANTS: list[VariantConfig] = [
         tp1_r              = 1.0,
     ),
     # ══════════════════════════════════════════════════════════════════════════
+    # ROUND 14 — Long-Only + Ultra-tight TP1 → push WR past 70%
+    #
+    # Analysis of Round 13 V54 trade log:
+    #   Long trades  24 → 15W  9L = 62.5% WR
+    #   Short trades 24 → 10W 14L = 41.7% WR  ← drag in 2025 bull market
+    #
+    # Approach A — ultra-tight TP1 on V54 set  (WR target 70%+)
+    # Approach B — long-only mode (min_zone_score_short=999)
+    # Approach C — long-only + volume expansion  (8-12 signals/month)
+    # Approach D — best WR × volume combo with partial TP
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── Approach A: ultra-tight TP1 on V54 signals ───────────────────────────
+    VariantConfig(
+        label              = "V71 · V54 + TP1=0.5R (ultra-early exit)",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 0.5,
+    ),
+    VariantConfig(
+        label              = "V72 · V54 + TP1=0.6R",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 0.6,
+    ),
+    # ── Approach B: long-only baseline ────────────────────────────────────────
+    VariantConfig(
+        label              = "V73 · V54 long-only (score_short=999)",
+        **_WW,
+        min_zone_score        = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 15,  daily_cap=4,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 5.5,
+        min_zone_score_short  = 999.0,   # disable shorts
+    ),
+    VariantConfig(
+        label              = "V74 · V54 long-only + TP1=0.8R",
+        **_WW,
+        min_zone_score        = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 15,  daily_cap=4,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 5.5,
+        min_zone_score_short  = 999.0,
+        tp1_r                 = 0.8,
+    ),
+    # ── Approach C: long-only with volume expansion ───────────────────────────
+    VariantConfig(
+        label              = "V75 · long-only zone≥5.0 wy≥5.9 cool10 d6 TP1=0.8R",
+        **_WW,
+        min_zone_score        = 5.0, min_wyckoff_score=5.9,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 10,  daily_cap=6,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 5.0,
+        min_zone_score_short  = 999.0,
+        tp1_r                 = 0.8,
+    ),
+    VariantConfig(
+        label              = "V76 · long-only zone≥5.0 wy≥5.5 cool10 d6 TP1=0.8R",
+        **_WW,
+        min_zone_score        = 5.0, min_wyckoff_score=5.5,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 10,  daily_cap=6,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 5.0,
+        min_zone_score_short  = 999.0,
+        tp1_r                 = 0.8,
+    ),
+    # ── Approach D: best WR × volume combo ────────────────────────────────────
+    VariantConfig(
+        label              = "V77 · zone≥5.5 wy≥5.9 cool10 d6 TP1=0.6R mloss4",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=False,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 0.6,
+    ),
+    VariantConfig(
+        label              = "V78 · long-only zone≥5.5 wy≥5.9 cool10 d6 TP1=0.6R",
+        **_WW,
+        min_zone_score        = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 10,  daily_cap=6,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 5.5,
+        min_zone_score_short  = 999.0,
+        tp1_r                 = 0.6,
+    ),
+    # ══════════════════════════════════════════════════════════════════════════
+    # ROUND 15 — Volume expansion on long-only + price_above_ema filter
+    #
+    # Round 14 discovered: long-only gives 75.9% WR (V74) but only 2.4 signals/month.
+    # Need 3-4× more long signals while keeping WR ≥ 70%.
+    #
+    # Approach A — expand long universe (lower zone/wy, shorter cooldown)
+    # Approach B — use_price_above_ema=True to kill bad shorts in bull market
+    # Approach C — price_above_ema on combined long+short strategy
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── Approach A: expand long volume ────────────────────────────────────────
+    VariantConfig(
+        label              = "V79 · long-only zone≥5.0 wy≥5.7 cool10 d6 TP1=0.8R",
+        **_WW,
+        min_zone_score        = 5.0, min_wyckoff_score=5.7,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 10,  daily_cap=6,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 5.0,
+        min_zone_score_short  = 999.0,
+        tp1_r                 = 0.8,
+    ),
+    VariantConfig(
+        label              = "V80 · long-only zone≥4.5 wy≥5.9 cool10 d6 TP1=0.8R",
+        **_WW,
+        min_zone_score        = 4.5, min_wyckoff_score=5.9,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 10,  daily_cap=6,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 4.5,
+        min_zone_score_short  = 999.0,
+        tp1_r                 = 0.8,
+    ),
+    VariantConfig(
+        label              = "V81 · long-only zone≥4.5 wy≥5.5 cool10 d8 TP1=0.8R",
+        **_WW,
+        min_zone_score        = 4.5, min_wyckoff_score=5.5,
+        trend_slope_lb        = 6,   use_price_above_ema=False,
+        signal_cooldown       = 10,  daily_cap=8,
+        risk_reward           = 2.5,
+        max_monthly_losses    = 4,
+        min_zone_score_long   = 4.5,
+        min_zone_score_short  = 999.0,
+        tp1_r                 = 0.8,
+    ),
+    # ── Approach B: price_above_ema to filter bad shorts ──────────────────────
+    VariantConfig(
+        label              = "V82 · V54 + price_above_ema=True",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+    ),
+    VariantConfig(
+        label              = "V83 · V54 + price_above_ema=True + TP1=0.8R",
+        **_WW,
+        min_zone_score     = 5.5, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 15,  daily_cap=4,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 0.8,
+    ),
+    # ── Approach C: price_above_ema + volume expansion ────────────────────────
+    VariantConfig(
+        label              = "V84 · zone≥5.0 wy≥5.9 cool10 d6 TP1=0.8R price_ema",
+        **_WW,
+        min_zone_score     = 5.0, min_wyckoff_score=5.9,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 0.8,
+    ),
+    VariantConfig(
+        label              = "V85 · zone≥5.0 wy≥5.5 cool10 d6 TP1=0.8R price_ema",
+        **_WW,
+        min_zone_score     = 5.0, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=6,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 0.8,
+    ),
+    VariantConfig(
+        label              = "V86 · zone≥4.5 wy≥5.5 cool10 d8 TP1=0.8R price_ema",
+        **_WW,
+        min_zone_score     = 4.5, min_wyckoff_score=5.5,
+        trend_slope_lb     = 6,   use_price_above_ema=True,
+        signal_cooldown    = 10,  daily_cap=8,
+        risk_reward        = 2.5,
+        max_monthly_losses = 4,
+        tp1_r              = 0.8,
+    ),
+    # ══════════════════════════════════════════════════════════════════════════
     # PRODUCTION CHAMPION — V54
     # Discovered after 11 rounds of iterative optimisation on XAUUSD 2025 M1.
     #
@@ -277,9 +480,10 @@ def _run_variant(
     cfg:   VariantConfig,
     m1_df: pd.DataFrame,
     m15_df: pd.DataFrame,
+    base_zones: list | None = None,
 ) -> tuple[list[TradeResult], dict[str, Any], int]:
     strategy = _build_strategy(cfg)
-    signals  = strategy.run(m15_df, m1_df)
+    signals  = strategy.run(m15_df, m1_df, pre_detected_zones=base_zones)
     results, n_expired = simulate_all(
         signals, m1_df,
         risk_pct           = RISK_PCT,
@@ -325,11 +529,16 @@ def main() -> None:
     m15_df = resample_ohlcv(m1_df, "15min")
     print(f"  {len(m1_df):,} M1 bars  |  {len(m15_df):,} M15 bars\n")
 
+    print("Detecting zones (once) …", end="", flush=True)
+    _base_det   = ZoneDetector()
+    _base_zones = _base_det.detect_zones(m15_df)
+    print(f" {len(_base_zones)} zones\n")
+
     print("Running variants (this takes a few minutes) …\n")
     all_results = []
     for cfg in VARIANTS:
         print(f"  [{cfg.label}] …", end="", flush=True)
-        results, m, n_sig = _run_variant(cfg, m1_df, m15_df)
+        results, m, n_sig = _run_variant(cfg, m1_df, m15_df, base_zones=_base_zones)
         all_results.append((cfg, results, m, n_sig))
         print(f" {n_sig} signals")
 
