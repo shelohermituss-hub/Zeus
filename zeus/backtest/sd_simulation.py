@@ -193,7 +193,9 @@ def simulate_trade(
             else:
                 # F-09: slippage applied on SL exit (stop orders get market-order fill)
                 sl_exit    = (active_sl - slippage_ticks) if is_long else (active_sl + slippage_ticks)
-                loss_pnl_r = (sl_exit - effective_entry) / sl_dist  # ≤ -1.0
+                # Direction-aware: long loses when price falls (sl_exit < entry → negative);
+                # short loses when price rises (sl_exit > entry → must negate).
+                loss_pnl_r = (sl_exit - effective_entry) / sl_dist if is_long else (effective_entry - sl_exit) / sl_dist
                 return _exit(bar_idx, sl_exit, "loss", loss_pnl_r)
 
         # ── TP1 check (partial exit, SL moves to BE for remainder) ───────────

@@ -423,3 +423,70 @@ def test_slippage_zero_exit_price_equals_sl():
     assert result is not None
     assert result.outcome == "loss"
     assert result.exit_price == pytest.approx(sig.stop_loss, abs=1e-4)
+
+
+# ── Short-loss direction fix (regression for sign bug) ────────────────────────
+
+def test_short_sl_hit_gives_negative_pnl_r():
+    """
+    When a SHORT trade hits its stop-loss, pnl_r MUST be negative.
+    Before the fix, the formula (sl_exit - entry) / sl_dist was positive for
+    shorts (because sl_exit > entry for short positions), incorrectly reporting
+    a short stop-loss as a +1R gain.
+    """
+    sig = _signal_supply(mss_bar=4)
+    # Signal: direction="short", entry≈1907.7 (mss_close=1908, minus spread),
+    # SL=1940 (wick_extreme of supply zone), TP recalculated below entry.
+    # Bar 5 = entry (open=1920). Bar 6 = SL hit (price rallies above 1940).
+    m1 = _m1(
+        opens  = [0]*5 + [1920.0, 1950.0],
+        highs  = [0]*5 + [1925.0, 1955.0],  # bar 6 high > SL 1940 → stop hit
+        lows   = [0]*5 + [1915.0, 1935.0],
+        closes = [0]*5 + [1918.0, 1945.0],
+    )
+    result = simulate_trade(sig, m1, equity=10_000.0, spread=SPREAD)
+    assert result is not None
+    assert result.outcome == "loss"
+    assert result.pnl_r < 0, (
+        f"Short SL hit must give negative pnl_r; got {result.pnl_r:.4f}"
+    )
+    assert result.pnl_usd < 0, (
+        f"Short SL hit must give negative pnl_usd; got {result.pnl_usd:.2f}"
+    )
+    assert result.pnl_r == pytest.approx(-1.0, abs=1e-3)
+
+
+def test_short_sl_hit_pnl_approx_minus_one_r():
+    """Short loss pnl_r must be ≈ −1.0R (regardless of price levels)."""
+    sig = _signal_supply(mss_bar=4)
+    # force SL hit immediately after entry
+    m1 = _m1(
+        opens  = [0]*5 + [1908.0, 1945.0],
+        highs  = [0]*5 + [1910.0, 1950.0],
+        lows   = [0]*5 + [1906.0, 1940.0],
+        closes = [0]*5 + [1908.0, 1945.0],
+    )
+    result = simulate_trade(sig, m1, equity=10_000.0, spread=0.0)  # no spread for exact R
+    assert result is not None
+    assert result.outcome == "loss"
+    assert result.pnl_r == pytest.approx(-1.0, abs=1e-3)
+
+
+def test_short_win_gives_positive_pnl_r():
+    """Confirming short wins remain positive after the direction fix."""
+    sig = _signal_supply(mss_bar=4)
+    # entry open=1920, effective_entry=1920-0.30=1919.70
+    # sl=1940, sl_dist=1940-1919.70=20.30
+    # tp = 1919.70 - 3*20.30 = 1919.70 - 60.90 = 1858.80
+    # bar 6: low well below tp → TP hit
+    m1 = _m1(
+        opens  = [0]*5 + [1920.0, 1850.0],
+        highs  = [0]*5 + [1925.0, 1870.0],
+        lows   = [0]*5 + [1915.0, 1840.0],  # low < tp → win
+        closes = [0]*5 + [1918.0, 1855.0],
+    )
+    result = simulate_trade(sig, m1, equity=10_000.0, spread=SPREAD)
+    assert result is not None
+    assert result.outcome == "win"
+    assert result.pnl_r == pytest.approx(3.0, abs=1e-3)
+    assert result.pnl_usd > 0
