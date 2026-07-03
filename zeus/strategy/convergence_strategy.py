@@ -87,6 +87,7 @@ class ConvergenceStrategy:
     use_killzone        : restrict entries to London / NY killzone (default True)
     use_ltf_sweep       : require LTF inducement sweep (default True)
     ltf_sweep_lookback  : bars to scan for LTF sweep (default 5)
+    require_fvg         : require an unmitigated FVG overlapping the OB (default True)
     require_bullish_bar : entry bar must close bullish (default True)
     min_ob_age          : OB must be ≥ N bars old before qualifying (default 2)
     max_ob_age          : OB expires after N bars without a retest (default 200)
@@ -108,6 +109,7 @@ class ConvergenceStrategy:
         use_killzone:        bool  = True,
         use_ltf_sweep:       bool  = True,
         ltf_sweep_lookback:  int   = 5,
+        require_fvg:         bool  = True,
         require_bullish_bar: bool  = True,
         min_ob_age:          int   = 2,
         max_ob_age:          int   = 200,
@@ -126,6 +128,7 @@ class ConvergenceStrategy:
         self.use_killzone        = use_killzone
         self.use_ltf_sweep       = use_ltf_sweep
         self.ltf_sweep_lookback  = ltf_sweep_lookback
+        self.require_fvg         = require_fvg
         self.require_bullish_bar = require_bullish_bar
         self.min_ob_age          = min_ob_age
         self.max_ob_age          = max_ob_age
@@ -262,12 +265,13 @@ class ConvergenceStrategy:
                 if cl_i < ob.low:
                     continue   # price closed below OB — mitigated
 
-                # FVG must overlap with OB zone
-                active_fvgs = get_active_fvgs(bull_fvgs, at_bar=i)
-                overlapping_fvg = self._find_overlapping_fvg(active_fvgs, ob)
-
-                if overlapping_fvg is None:
-                    continue
+                # FVG overlapping OB (optional)
+                overlapping_fvg = None
+                if self.require_fvg:
+                    active_fvgs     = get_active_fvgs(bull_fvgs, at_bar=i)
+                    overlapping_fvg = self._find_overlapping_fvg(active_fvgs, ob)
+                    if overlapping_fvg is None:
+                        continue
 
                 # ── All filters passed — build signal ─────────────────────
                 sl_buf    = self.sl_buffer_atr * atr_i
@@ -278,14 +282,13 @@ class ConvergenceStrategy:
 
                 tp = cl_i + self.risk_reward * risk_dist
 
-                # Convergence score: 1 per filter (max 6)
                 score = self._compute_score(
-                    use_d1_ema   = self.use_d1_ema,
-                    use_h4      = self.use_h4_trend,
-                    use_kz      = self.use_killzone,
-                    use_sweep   = self.use_ltf_sweep,
-                    has_fvg     = True,
-                    bull_bar    = self.require_bullish_bar,
+                    use_d1_ema = self.use_d1_ema,
+                    use_h4     = self.use_h4_trend,
+                    use_kz     = self.use_killzone,
+                    use_sweep  = self.use_ltf_sweep,
+                    has_fvg    = self.require_fvg,
+                    bull_bar   = self.require_bullish_bar,
                 )
 
                 sig = ConvergenceSignal(
@@ -299,9 +302,9 @@ class ConvergenceStrategy:
                     ob_bar         = ob.bar_index,
                     ob_high        = ob.high,
                     ob_low         = ob.low,
-                    fvg_bar        = overlapping_fvg.bar_index,
-                    fvg_top        = overlapping_fvg.top,
-                    fvg_bottom     = overlapping_fvg.bottom,
+                    fvg_bar        = overlapping_fvg.bar_index  if overlapping_fvg else -1,
+                    fvg_top        = overlapping_fvg.top        if overlapping_fvg else 0.0,
+                    fvg_bottom     = overlapping_fvg.bottom     if overlapping_fvg else 0.0,
                     ltf_sweep_bar  = sweep_bar,
                     zone_score     = score,
                 )
