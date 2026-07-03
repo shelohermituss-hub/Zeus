@@ -28,12 +28,8 @@ class LogLevel(str, Enum):
 
 
 class StrategyType(str, Enum):
-    SMC          = "smc"
-    HARMONIC     = "harmonic"
-    ICT_OB       = "ict_ob"
-    FVG_RETEST   = "fvg_retest"
-    HARMONIC_ICT = "harmonic_ict"
-    PORTFOLIO    = "portfolio"
+    SMC = "smc"
+    SD  = "sd"
 
 
 class Settings(BaseSettings):

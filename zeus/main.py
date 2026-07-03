@@ -39,12 +39,8 @@ from zeus.exchange.factory import create_market_connector
 from zeus.monitoring.telegram import TelegramNotifier
 from zeus.paper.engine import PaperEngine
 from zeus.strategy.base import Strategy
-from zeus.strategy.fvg_retest_strategy import FVGRetestStrategy
-from zeus.strategy.harmonic_ict_strategy import HarmonicICTStrategy
-from zeus.strategy.harmonic_strategy import HarmonicStrategy
-from zeus.strategy.ict_ob_strategy import ICTObStrategy
-from zeus.strategy.portfolio import PortfolioStrategy
 from zeus.strategy.smc_strategy import SMCStrategy
+from zeus.strategy.supply_demand.sd_strategy import SDStrategy
 from zeus.utils.logger import logger, setup_logger
 
 
@@ -53,21 +49,8 @@ def _make_strategy(settings) -> Strategy:
     stype = settings.strategy
     if stype == StrategyType.SMC:
         return SMCStrategy(min_score=settings.smc_min_score)
-    if stype == StrategyType.HARMONIC:
-        return PortfolioStrategy([("harmonic", HarmonicStrategy())])
-    if stype == StrategyType.ICT_OB:
-        return PortfolioStrategy([("ict_ob", ICTObStrategy())])
-    if stype == StrategyType.FVG_RETEST:
-        return PortfolioStrategy([("fvg_retest", FVGRetestStrategy())])
-    if stype == StrategyType.HARMONIC_ICT:
-        return PortfolioStrategy([("harmonic_ict", HarmonicICTStrategy())])
-    if stype == StrategyType.PORTFOLIO:
-        return PortfolioStrategy([
-            ("harmonic",     HarmonicStrategy()),
-            ("ict_ob",       ICTObStrategy()),
-            ("fvg_retest",   FVGRetestStrategy()),
-            ("harmonic_ict", HarmonicICTStrategy()),
-        ])
+    if stype == StrategyType.SD:
+        return SDStrategy()
     raise ValueError(f"Unknown strategy type: {stype}")
 
 
