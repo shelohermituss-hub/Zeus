@@ -96,6 +96,11 @@ def simulate_trade(
     use_be: if True (and tp1_r == 0), move SL to break-even once +1R is reached.
             Ignored when tp1_r > 0 (partial TP takes over the BE role).
 
+    slippage_ticks: applied at BOTH entry and SL exits (stop orders fill at market).
+                    Entry: effective_entry += spread + slippage_ticks (long).
+                    SL exit: fill at active_sl − slippage_ticks (long) — pessimistic.
+                    TP exits use limit orders, so no additional slippage there.
+
     tick_df: when provided (M1 data), SL/TP are checked bar-by-bar at M1
              resolution — much more realistic than M15-only checking.
              signal.bar_index still refers to the M15 (df) frame.
@@ -186,7 +191,10 @@ def simulate_trade(
             elif be_active:
                 return _exit(bar_idx, active_sl, "scratch", 0.0)
             else:
-                return _exit(bar_idx, active_sl, "loss", -1.0)
+                # F-09: slippage applied on SL exit (stop orders get market-order fill)
+                sl_exit    = (active_sl - slippage_ticks) if is_long else (active_sl + slippage_ticks)
+                loss_pnl_r = (sl_exit - effective_entry) / sl_dist  # ≤ -1.0
+                return _exit(bar_idx, sl_exit, "loss", loss_pnl_r)
 
         # ── TP1 check (partial exit, SL moves to BE for remainder) ───────────
         if use_tp1 and not tp1_hit:

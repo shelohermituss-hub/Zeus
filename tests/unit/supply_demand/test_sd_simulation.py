@@ -384,3 +384,42 @@ def test_simulate_all_initial_equity_used():
         assert abs(results_50k[0].pnl_usd) == pytest.approx(
             abs(results_10k[0].pnl_usd) * 5, rel=0.01
         )
+
+
+# ── Slippage on SL exit (F-09) ───────────────────────────────────────────────
+
+def test_slippage_applied_on_sl_exit():
+    """slippage_ticks must worsen the SL fill, increasing the loss (F-09)."""
+    sig = _signal_demand(mss_bar=4)
+    m1 = _m1(
+        opens  = [0]*5 + [1910.0, 1910.0, 1910.0, 1910.0, 1870.0],
+        highs  = [0]*5 + [1920.0, 1920.0, 1920.0, 1920.0, 1890.0],
+        lows   = [0]*5 + [1905.0, 1905.0, 1905.0, 1905.0, 1865.0],
+        closes = [0]*5 + [1912.0, 1912.0, 1912.0, 1912.0, 1870.0],
+    )
+    res_no = simulate_trade(sig, m1, equity=10_000.0, spread=SPREAD, slippage_ticks=0.0)
+    res_sl = simulate_trade(sig, m1, equity=10_000.0, spread=SPREAD, slippage_ticks=0.10)
+
+    assert res_no is not None and res_sl is not None
+    assert res_no.outcome == "loss"
+    assert res_sl.outcome == "loss"
+    # Slipped exit is lower (worse for the long)
+    assert res_sl.exit_price < res_no.exit_price
+    assert res_no.exit_price - res_sl.exit_price == pytest.approx(0.10, abs=1e-4)
+    # Slipped trade loses more money
+    assert res_sl.pnl_usd < res_no.pnl_usd
+
+
+def test_slippage_zero_exit_price_equals_sl():
+    """With slippage_ticks=0, SL exit price must equal the exact SL level."""
+    sig = _signal_demand(mss_bar=4)
+    m1 = _m1(
+        opens  = [0]*5 + [1910.0, 1910.0, 1910.0, 1910.0, 1870.0],
+        highs  = [0]*5 + [1920.0, 1920.0, 1920.0, 1920.0, 1890.0],
+        lows   = [0]*5 + [1905.0, 1905.0, 1905.0, 1905.0, 1865.0],
+        closes = [0]*5 + [1912.0, 1912.0, 1912.0, 1912.0, 1870.0],
+    )
+    result = simulate_trade(sig, m1, equity=10_000.0, spread=SPREAD, slippage_ticks=0.0)
+    assert result is not None
+    assert result.outcome == "loss"
+    assert result.exit_price == pytest.approx(sig.stop_loss, abs=1e-4)
