@@ -83,6 +83,8 @@ def simulate_trade(
     slippage_ticks:    float = 0.0,
     tick_df:           pd.DataFrame | None = None,
     quote_to_usd_rate: float = 1.0,    # divide P&L by this for non-USD quote pairs (e.g. 149 for CADJPY)
+    use_trailing_stop: bool  = False,  # trail SL behind peak price after TP1 hit
+    trailing_factor:   float = 0.5,    # trail distance = trailing_factor × sl_dist (default 0.5R)
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
@@ -152,7 +154,8 @@ def simulate_trade(
     use_tp1  = tp1_r > 0.0 and tp1_r < signal.risk_reward
     tp1      = ((effective_entry + tp1_r * sl_dist) if is_long
                 else (effective_entry - tp1_r * sl_dist)) if use_tp1 else 0.0
-    tp1_hit  = False
+    tp1_hit    = False
+    peak_price = effective_entry   # tracks highest price reached (for trailing stop)
 
     def _exit(bar_idx: int, exit_px: float, outcome: str, pnl_r: float) -> TradeResult:
         raw_pnl = size_oz * sl_dist * pnl_r
@@ -183,13 +186,24 @@ def simulate_trade(
                 be_active = True
                 active_sl = effective_entry
 
+        # Trailing stop: after TP1, trail SL behind peak price by trailing_factor × sl_dist
+        if use_trailing_stop and tp1_hit:
+            if is_long:
+                peak_price = max(peak_price, hi)
+                active_sl  = max(active_sl, peak_price - trailing_factor * sl_dist)
+            else:
+                peak_price = min(peak_price, lo)
+                active_sl  = min(active_sl, peak_price + trailing_factor * sl_dist)
+
         # ── SL check (pessimistic: always evaluated first) ────────────────────
         sl_hit = (lo <= active_sl) if is_long else (hi >= active_sl)
         if sl_hit:
             if use_tp1 and tp1_hit:
-                # TP1 was previously hit; remaining position exits at BE (0 P&L)
-                # → count as "win" since primary target was reached
-                return _exit(bar_idx, active_sl, "win", tp1_size * tp1_r)
+                # TP1 was hit; remaining exits at active_sl (BE or trailed above BE)
+                remaining_r = ((active_sl - effective_entry) / sl_dist if is_long
+                               else (effective_entry - active_sl) / sl_dist)
+                total_r = tp1_size * tp1_r + (1.0 - tp1_size) * remaining_r
+                return _exit(bar_idx, active_sl, "win", total_r)
             elif be_active:
                 return _exit(bar_idx, active_sl, "scratch", 0.0)
             else:
@@ -200,11 +214,12 @@ def simulate_trade(
                 loss_pnl_r = (sl_exit - effective_entry) / sl_dist if is_long else (effective_entry - sl_exit) / sl_dist
                 return _exit(bar_idx, sl_exit, "loss", loss_pnl_r)
 
-        # ── TP1 check (partial exit, SL moves to BE for remainder) ───────────
+        # ── TP1 check (partial exit, SL moves to BE; trailing starts from TP1) ─
         if use_tp1 and not tp1_hit:
             if (hi >= tp1 if is_long else lo <= tp1):
-                tp1_hit   = True
-                active_sl = effective_entry  # SL → BE from next evaluation
+                tp1_hit    = True
+                active_sl  = effective_entry  # SL → BE from next evaluation
+                peak_price = tp1              # trailing starts from TP1 level
 
         # ── TP2 / full TP check ───────────────────────────────────────────────
         tp_hit = (hi >= tp) if is_long else (lo <= tp)
@@ -231,7 +246,9 @@ def simulate_all(
     initial_equity:     float = 10_000.0,
     slippage_ticks:     float = 0.0,
     tick_df:            pd.DataFrame | None = None,
-    quote_to_usd_rate:  float = 1.0,        # divide P&L by this for non-USD quote pairs
+    quote_to_usd_rate:  float = 1.0,
+    use_trailing_stop:  bool  = False,
+    trailing_factor:    float = 0.5,
 ) -> tuple[list[TradeResult], int]:
     """
     Simulate all signals sequentially with compounding equity.
@@ -266,6 +283,7 @@ def simulate_all(
             sig, df, equity, risk_pct, spread, use_be, tp1_r, tp1_size,
             slippage_ticks=slippage_ticks, tick_df=tick_df,
             quote_to_usd_rate=quote_to_usd_rate,
+            use_trailing_stop=use_trailing_stop, trailing_factor=trailing_factor,
         )
         if result is None:
             n_expired += 1

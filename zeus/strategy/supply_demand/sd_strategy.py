@@ -196,6 +196,8 @@ class SDStrategy:
         pip_size:             float = 0.0001,
         ema_atr_tolerance:    float = 0.0,
         min_score_product:    float = 0.0,
+        use_first_touch_only: bool  = False,
+        first_touch_window:   int   = 60,   # M1 bars allowed after first touch (60 = 1 hour)
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -229,6 +231,8 @@ class SDStrategy:
         self.pip_size             = pip_size
         self.ema_atr_tolerance    = ema_atr_tolerance
         self.min_score_product    = min_score_product
+        self.use_first_touch_only = use_first_touch_only
+        self.first_touch_window   = first_touch_window
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -537,6 +541,10 @@ class SDStrategy:
                 if i - _last_signal.get(z_key, -(self.signal_cooldown + 1)) < self.signal_cooldown:
                     continue
                 if self.first_signal_per_zone and z_key in _last_signal:
+                    continue
+
+                # First-touch filter: skip if zone was visited more than first_touch_window bars ago
+                if self.use_first_touch_only and i > _first_touch_idx[j] + self.first_touch_window:
                     continue
 
                 # Wyckoff confirmation — cached per (bar_index, direction)
