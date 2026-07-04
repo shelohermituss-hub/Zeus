@@ -8,6 +8,7 @@ htmlcov/
 dist/
 build/
 data/logs/
+data/historical/**/*.txt
 *.db
 .venv/
 venv/

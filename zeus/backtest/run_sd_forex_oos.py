@@ -312,8 +312,11 @@ def main() -> None:
     print("  Reference — XAUUSD V_FINAL_B (2024 OOS):")
     xau_path = _DATA / "xauusd" / "m1" / "DAT_MT_XAUUSD_M1_2024.csv"
     if xau_path.exists():
-        from zeus.backtest.run_sd_forex_final import _WYCKOFF_PARAMS as _WY2
-        xau_wy = WyckoffDetector(**_WY2)
+        _xau_wy_params = dict(
+            lookback=200, max_accum_bars=20, accum_range_mult=6.0,
+            mss_lookback=60, min_spring_sweep_pct=0.05, min_mss_strength_pct=0.03,
+        )
+        xau_wy = WyckoffDetector(**_xau_wy_params)
         xau_strat = SDStrategy(
             zone_detector    = ZoneDetector(),
             wyckoff_detector = xau_wy,
