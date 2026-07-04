@@ -238,30 +238,30 @@ def _pass(m: dict) -> bool:
 
 def main() -> None:
     configs = [
-        # label,            cfg dict
-        ("BASELINE 0.5%",  {"risk_pct": 0.005, "tp1_r": 0.75, "tp1_size": 0.50,
-                             "runner_rr": 1.25}),
-        ("HYBRID 1%",      {"risk_pct": 0.010, "tp1_r": 0.0,  "tp1_size": 0.0,
-                             "runner_rr": 1.25, "use_pool_runner": True}),
-        ("TIERED-3R 0.5%", {"risk_pct": 0.005, "tp1_r": 1.5,  "tp1_size": 0.33,
-                             "tp2_r": 3.0, "tp2_cumulative": 0.70,
-                             "runner_rr": 8.0}),
-        ("TIERED-5R 0.5%", {"risk_pct": 0.005, "tp1_r": 1.5,  "tp1_size": 0.33,
-                             "tp2_r": 5.0, "tp2_cumulative": 0.70,
-                             "runner_rr": 10.0}),
-        ("TIERED-3R+POOL", {"risk_pct": 0.005, "tp1_r": 1.5,  "tp1_size": 0.33,
-                             "tp2_r": 3.0, "tp2_cumulative": 0.70,
-                             "runner_rr": 8.0, "use_pool_runner": True}),
-        ("TIERED-3R 1%",   {"risk_pct": 0.010, "tp1_r": 1.5,  "tp1_size": 0.33,
-                             "tp2_r": 3.0, "tp2_cumulative": 0.70,
-                             "runner_rr": 8.0}),
-        ("TIERED-5R 1%",   {"risk_pct": 0.010, "tp1_r": 1.5,  "tp1_size": 0.33,
-                             "tp2_r": 5.0, "tp2_cumulative": 0.70,
-                             "runner_rr": 10.0}),
+        # ── Références ──────────────────────────────────────────────────────────
+        ("BASELINE 0.5%",      {"risk_pct": 0.005, "tp1_r": 0.75, "tp1_size": 0.50,
+                                 "runner_rr": 1.25}),
+        # 2-tier original (104R/55R, WR=77%)
+        ("2T TP1@1R/RR=3 0.5%",{"risk_pct": 0.005, "tp1_r": 1.0,  "tp1_size": 0.33,
+                                 "tp2_r": 0.0, "runner_rr": 3.0}),
+        # ── Nouveaux variants 3-tier avec TP1@1R (WR ~77%) ─────────────────────
+        ("3T 1R→3R→8R  0.5%",  {"risk_pct": 0.005, "tp1_r": 1.0,  "tp1_size": 0.33,
+                                 "tp2_r": 3.0, "tp2_cumulative": 0.70,
+                                 "runner_rr": 8.0}),
+        ("3T 1R→3R→10R 0.5%",  {"risk_pct": 0.005, "tp1_r": 1.0,  "tp1_size": 0.33,
+                                 "tp2_r": 3.0, "tp2_cumulative": 0.70,
+                                 "runner_rr": 10.0}),
+        ("3T 1R→5R→10R 0.5%",  {"risk_pct": 0.005, "tp1_r": 1.0,  "tp1_size": 0.33,
+                                 "tp2_r": 5.0, "tp2_cumulative": 0.70,
+                                 "runner_rr": 10.0}),
+        # ── Meilleur OOS précédent (WR ~55%) ────────────────────────────────────
+        ("TIERED-5R 0.5%",     {"risk_pct": 0.005, "tp1_r": 1.5,  "tp1_size": 0.33,
+                                 "tp2_r": 5.0, "tp2_cumulative": 0.70,
+                                 "runner_rr": 10.0}),
     ]
 
-    hdr = (f"{'Config':<20} {'N':>4} {'WR%':>6} {'TotalR':>9} {'DD%':>5} "
-           f"{'AvgWinR':>8} {'Risk%':>6}")
+    hdr = (f"{'Config':<24} {'N':>4} {'WR%':>6} {'TotalR':>9} {'DD%':>5} "
+           f"{'AvgWinR':>8}")
     sep = "─" * len(hdr)
 
     for year_label, pairs in [("2024 (optimisation)", PAPER_CLUSTER_2024),
@@ -279,18 +279,18 @@ def main() -> None:
             tr  = m.get("total_r",   0.0)
             dd  = m.get("max_dd",    0.0)
             arw = m.get("avg_win_rr", 0.0)
-            rsk = cfg["risk_pct"] * 100
             ok  = "✅" if _pass(m) else "❌"
-            print(f"{label:<20} {n:>4} {wr:>6.1f} {tr:>9.2f} {dd:>5.1f} "
-                  f"{arw:>8.2f} {rsk:>5.1f}%  {ok}")
+            print(f"{label:<24} {n:>4} {wr:>6.1f} {tr:>9.2f} {dd:>5.1f} "
+                  f"{arw:>8.2f}  {ok}")
 
     print()
-    print("  Exit structure:")
-    print("  TIERED-3R : TP1@1.5R(33%) → TP2@3R(70%) → Runner@8R")
-    print("  TIERED-5R : TP1@1.5R(33%) → TP2@5R(70%) → Runner@10R")
-    print("  +POOL     : runner target replaced by nearest opposing swing pool")
-    print("  After TP1 hit: SL moves to break-even")
-    print("  After TP2 hit: SL moves to TP1 level")
+    print("  Structures testées :")
+    print("  2T TP1@1R/RR=3 : TP1@1R(33%) → final@3R          [2 niveaux]")
+    print("  3T 1R→3R→8R    : TP1@1R(33%) → TP2@3R(70%) → Runner@8R")
+    print("  3T 1R→3R→10R   : TP1@1R(33%) → TP2@3R(70%) → Runner@10R")
+    print("  3T 1R→5R→10R   : TP1@1R(33%) → TP2@5R(70%) → Runner@10R")
+    print("  TIERED-5R      : TP1@1.5R(33%) → TP2@5R(70%) → Runner@10R")
+    print("  Après TP1 : SL → BE  |  Après TP2 : SL → TP1 level")
     print()
 
 
