@@ -199,6 +199,7 @@ class SDStrategy:
         use_first_touch_only: bool  = False,
         first_touch_window:   int   = 60,   # M1 bars allowed after first touch (60 = 1 hour)
         use_wyckoff_sl:       bool  = False, # when True, SL = wyckoff.manip_extreme (M1 wick) instead of zone.wick_extreme (M15)
+        max_sl_pips:          float = 0.0,   # when > 0, reject signals whose SL distance exceeds this many pips
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -235,6 +236,7 @@ class SDStrategy:
         self.use_first_touch_only = use_first_touch_only
         self.first_touch_window   = first_touch_window
         self.use_wyckoff_sl       = use_wyckoff_sl
+        self.max_sl_pips          = max_sl_pips
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -616,6 +618,8 @@ class SDStrategy:
         if risk < 1e-8:
             return None
         if self.min_sl_pips > 0 and risk < self.min_sl_pips * self.pip_size:
+            return None
+        if self.max_sl_pips > 0 and risk > self.max_sl_pips * self.pip_size:
             return None
 
         if zone.side == PivotSide.DEMAND:
