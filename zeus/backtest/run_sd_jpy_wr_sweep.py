@@ -190,74 +190,93 @@ def _pass(m: dict) -> bool:
             and m.get("n_trades", 0)   >= 20)
 
 
-def main() -> None:
-    hdr = (f"  {'Config':<22} {'N':>4}  {'WR%':>6}  {'TotalR':>8}  "
-           f"{'DD%':>5}  {'AvgWR':>7}")
-    sep = "─" * len(hdr)
+def _pair_row(p: dict) -> str:
+    return (f"    {p['sym']:<8} {p['n']:>4}  {p['wr']:>6.1f}%  {p['tr']:>+8.2f}R")
 
+
+def main() -> None:
     combos = list(itertools.product(WYCKOFF_PAIRS, ZONE_SCORES))
     total  = len(combos)
+
+    col_hdr = f"  {'Config':<22}  {'N':>4}  {'WR%':>6}  {'TotalR':>8}  {'DD%':>5}"
+    sep     = "─" * len(col_hdr)
 
     print(f"\n{'=' * 65}")
     print("  USDJPY + EURJPY — Wyckoff & Zone score sweep")
     print(f"  Exit: TP1@1.5R(33%) → TP2@5R(70%) → Runner@10R | 0.5% risk")
     print(f"{'=' * 65}")
 
+    # ── 2024 optimisation ───────────────────────────────────────────────────
     results_2024: list[tuple] = []
 
-    print(f"\n  Optimisation 2024  ({total} combos)")
-    print(hdr)
+    print(f"\n  ── 2024 — optimisation ({'─' * 3} {total} combos {'─' * 3})")
+    print(col_hdr)
     print(sep)
     for i, ((ws_l, ws_s), zs) in enumerate(combos, 1):
         label = f"WL{ws_l:.1f}|WS{ws_s:.1f}|ZS{zs:.1f}"
         m, pp = _run_combined(PAIRS_2024, ws_l, ws_s, zs)
         ok = "✅" if _pass(m) else "❌"
-        print(f"  [{i:>2}/{total}] {label:<22} {m['n_trades']:>4}  "
-              f"{m['win_rate']:>6.1f}  {m['total_r']:>8.2f}  "
-              f"{m['max_dd']:>5.1f}  {m['avg_win_rr']:>7.2f}  {ok}")
+        print(f"  {label:<22}  {m['n_trades']:>4}  {m['win_rate']:>6.1f}%  "
+              f"{m['total_r']:>+8.2f}R  {m['max_dd']:>5.1f}%  {ok}")
+        for p in pp:
+            print(_pair_row(p))
         results_2024.append(((ws_l, ws_s, zs), m, pp))
+        if i < total:
+            print()
 
-    print(f"\n  Cross-validation 2025  ({total} combos)")
-    print(hdr)
-    print(sep)
+    # ── 2025 OOS ────────────────────────────────────────────────────────────
+    results_2025: list[tuple] = []
+
+    print(f"\n  ── 2025 — OOS ({'─' * 3} {total} combos {'─' * 3})")
+    print(col_hdr + "   ret%")
+    print(sep + "───────")
     for i, ((ws_l, ws_s, zs), m24, _) in enumerate(results_2024, 1):
         label = f"WL{ws_l:.1f}|WS{ws_s:.1f}|ZS{zs:.1f}"
         m, pp = _run_combined(PAIRS_2025, ws_l, ws_s, zs)
         ok  = "✅" if _pass(m) else "❌"
-        ret = m["total_r"] / m24["total_r"] if m24["total_r"] > 0 else float("nan")
-        print(f"  [{i:>2}/{total}] {label:<22} {m['n_trades']:>4}  "
-              f"{m['win_rate']:>6.1f}  {m['total_r']:>8.2f}  "
-              f"{m['max_dd']:>5.1f}  {m['avg_win_rr']:>7.2f}  "
-              f"{ok}  ret={ret:.0%}" if m24["total_r"] > 0 else
-              f"  [{i:>2}/{total}] {label:<22} {m['n_trades']:>4}  "
-              f"{m['win_rate']:>6.1f}  {m['total_r']:>8.2f}  "
-              f"{m['max_dd']:>5.1f}  {m['avg_win_rr']:>7.2f}  {ok}  ret=n/a")
+        ret = f"{m['total_r'] / m24['total_r']:.0%}" if m24["total_r"] > 0 else "n/a"
+        print(f"  {label:<22}  {m['n_trades']:>4}  {m['win_rate']:>6.1f}%  "
+              f"{m['total_r']:>+8.2f}R  {m['max_dd']:>5.1f}%  {ok}  {ret}")
+        for p in pp:
+            print(_pair_row(p))
+        results_2025.append(((ws_l, ws_s, zs), m, pp))
+        if i < total:
+            print()
 
-    # Best combos from 2024
-    passing = [(cfg, m, pp) for cfg, m, pp in results_2024 if _pass(m)]
-    if passing:
-        best = sorted(passing, key=lambda x: x[1]["win_rate"], reverse=True)[0]
-        (ws_l, ws_s, zs), bm, bpp = best
-        print(f"\n  === Meilleur combo 2024 : WL{ws_l:.1f}|WS{ws_s:.1f}|ZS{zs:.1f} ===")
-        print(f"  N={bm['n_trades']}  WR={bm['win_rate']:.1f}%  "
-              f"R={bm['total_r']:.2f}  DD={bm['max_dd']:.1f}%")
-        print(f"  {'Paire':<8} {'N':>4}  {'WR%':>6}  {'TotalR':>8}")
-        print("  " + "─" * 30)
-        for p in bpp:
-            print(f"  {p['sym']:<8} {p['n']:>4}  {p['wr']:>6.1f}  {p['tr']:>8.2f}")
-    else:
-        print("\n  Aucun combo ne passe les critères (WR≥55%, R>0, DD≤8%, N≥20)")
-        # Show best by WR anyway
-        best_wr = sorted(results_2024, key=lambda x: x[1]["win_rate"], reverse=True)[0]
-        (ws_l, ws_s, zs), bm, bpp = best_wr
-        print(f"\n  Meilleur WR : WL{ws_l:.1f}|WS{ws_s:.1f}|ZS{zs:.1f}  "
-              f"WR={bm['win_rate']:.1f}%  N={bm['n_trades']}  R={bm['total_r']:.2f}")
-        print(f"  {'Paire':<8} {'N':>4}  {'WR%':>6}  {'TotalR':>8}")
-        print("  " + "─" * 30)
-        for p in bpp:
-            print(f"  {p['sym']:<8} {p['n']:>4}  {p['wr']:>6.1f}  {p['tr']:>8.2f}")
+    # ── Résumé côte-à-côte ──────────────────────────────────────────────────
+    print(f"\n{'=' * 65}")
+    print("  Résumé — combiné & par paire")
+    print(f"{'=' * 65}")
+    pair_hdr = f"  {'Config':<22}  {'Paire':<8}  {'N(24)':>5}  {'WR(24)':>7}  {'R(24)':>7}  {'N(25)':>5}  {'WR(25)':>7}  {'R(25)':>7}"
+    print(pair_hdr)
+    print("─" * len(pair_hdr))
 
-    print()
+    def _sym_data(pp: list[dict], sym: str) -> dict:
+        return next((p for p in pp if p["sym"] == sym), {"n": 0, "wr": 0.0, "tr": 0.0})
+
+    for (ws_l, ws_s, zs), m24, pp24 in results_2024:
+        label = f"WL{ws_l:.1f}|WS{ws_s:.1f}|ZS{zs:.1f}"
+        # Find matching 2025
+        (_, m25, pp25) = next(
+            (x for x in results_2025 if x[0] == (ws_l, ws_s, zs)),
+            ((ws_l, ws_s, zs), {"n_trades": 0, "win_rate": 0.0, "total_r": 0.0}, [])
+        )
+        ok24 = "✅" if _pass(m24) else "❌"
+        ok25 = "✅" if _pass(m25) else "❌"
+        # Combined row
+        print(f"  {label:<22}  {'TOTAL':<8}  {m24['n_trades']:>5}  "
+              f"{m24['win_rate']:>6.1f}%  {m24['total_r']:>+7.2f}  "
+              f"{m25['n_trades']:>5}  {m25['win_rate']:>6.1f}%  "
+              f"{m25['total_r']:>+7.2f}  {ok24}/{ok25}")
+        # Per-pair rows
+        for sym in ("USDJPY", "EURJPY"):
+            p24 = _sym_data(pp24, sym)
+            p25 = _sym_data(pp25, sym)
+            print(f"  {'':>22}  {sym:<8}  {p24['n']:>5}  "
+                  f"{p24['wr']:>6.1f}%  {p24['tr']:>+7.2f}  "
+                  f"{p25['n']:>5}  {p25['wr']:>6.1f}%  {p25['tr']:>+7.2f}")
+        print()
+
     print("  WL = min_wyckoff_score (longs) | WS = min_wyckoff_score_short")
     print("  ZS = min_zone_score | pip_size=0.01 (JPY) | q2u=1.0")
     print()
