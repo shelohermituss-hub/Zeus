@@ -86,19 +86,15 @@ _BASE_WYCKOFF = dict(
 )
 
 # ── Sweep axes ────────────────────────────────────────────────────────────────
-# 3 leviers principaux = 2×2×3 = 12 combos (~3 min sur 2024 uniquement)
+# 6 leviers = 2×2×3×2×2×2 = 96 combos — 2024 uniquement
 SWEEP_AXES: dict[str, list[Any]] = {
     "use_first_touch_only": [False, True],
     "use_h4_trend_filter":  [False, True],
     "min_zone_score":       [4.0, 4.5, 5.0],
+    "min_wyckoff_score":    [7.0, 7.5],
+    "max_signals_per_day":  [6, 3],
+    "min_sl_pips":          [5, 10],
 }
-
-# Valeurs fixes pour les leviers secondaires
-_BASE_FIXED_EXTRA = dict(
-    min_wyckoff_score   = 7.0,
-    max_signals_per_day = 6,
-    min_sl_pips         = 5,
-)
 
 # ── Paper cluster ─────────────────────────────────────────────────────────────
 PAPER_CLUSTER_2024 = [
@@ -118,7 +114,7 @@ PAPER_CLUSTER_2023 = [
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _build_strategy(session: tuple[int, int], sweep_params: dict) -> SDStrategy:
-    params = {**_BASE_FIXED, **_BASE_FIXED_EXTRA, **sweep_params}
+    params = {**_BASE_FIXED, **sweep_params}
     return SDStrategy(
         zone_detector     = ZoneDetector(),
         wyckoff_detector  = WyckoffDetector(**_BASE_WYCKOFF),
@@ -201,7 +197,10 @@ def _label(p: dict) -> str:
     fto = "FTO" if p["use_first_touch_only"] else "---"
     h4  = "H4"  if p["use_h4_trend_filter"]  else "--"
     zs  = f"ZS{p['min_zone_score']:.1f}"
-    return f"{fto}|{h4}|{zs}"
+    ws  = f"WS{p['min_wyckoff_score']:.1f}"
+    sd  = f"SPD{p['max_signals_per_day']}"
+    sl  = f"SL{int(p['min_sl_pips'])}p"
+    return f"{fto}|{h4}|{zs}|{ws}|{sd}|{sl}"
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -211,7 +210,7 @@ def main() -> None:
     combos = list(itertools.product(*SWEEP_AXES.values()))
     total  = len(combos)
 
-    print(f"\nSweeping {total} signal-quality configs on TIERED-5R exit (2024 only)")
+    print(f"\nSweeping {total} signal-quality configs on TIERED-5R exit — 2024 uniquement")
     print(f"Exit: TP1@{EXIT_CFG['tp1_r']}R({EXIT_CFG['tp1_size']*100:.0f}%) "
           f"→ TP2@{EXIT_CFG['tp2_r']}R({EXIT_CFG['tp2_cumulative']*100:.0f}%) "
           f"→ Runner@{EXIT_CFG['runner_rr']}R  |  risk={EXIT_CFG['risk_pct']*100:.1f}%\n")
@@ -229,24 +228,25 @@ def main() -> None:
 
     rows.sort(key=lambda r: (-r["win_rate"], -r["total_r"]))
 
-    hdr = f"{'Config':<20} {'N':>4} {'WR%':>6} {'TotalR':>8} {'DD%':>5} {'AvgWR':>7}"
+    hdr = f"{'Config':<36} {'N':>4} {'WR%':>6} {'TotalR':>8} {'DD%':>5} {'AvgWR':>7}"
     sep = "─" * len(hdr)
 
-    print(f"\n{'=' * 60}")
-    print("  2024 — 12 configs — triés par WR% desc")
-    print(f"{'=' * 60}")
+    print(f"\n{'=' * 72}")
+    print(f"  2024 — {total} configs — triés par WR% desc")
+    print(f"{'=' * 72}")
     print(hdr)
     print(sep)
 
     for r in rows:
         ok = "✅" if _pass(r) else "❌"
         print(
-            f"{r['label']:<20} {r['n_trades']:>4} {r['win_rate']:>6.1f} "
+            f"{r['label']:<36} {r['n_trades']:>4} {r['win_rate']:>6.1f} "
             f"{r['total_r']:>8.2f} {r['max_dd']:>5.1f} {r['avg_win_rr']:>7.2f}  {ok}"
         )
 
     print()
-    print("  FTO = use_first_touch_only | H4 = use_h4_trend_filter | ZS = min_zone_score")
+    print("  FTO=use_first_touch_only | H4=use_h4_trend_filter | ZS=min_zone_score")
+    print("  WS=min_wyckoff_score | SPD=max_signals_per_day | SLp=min_sl_pips")
     print("  Pass: WR≥60%, TotalR>0, DD≤8%, N≥30")
     print()
 
