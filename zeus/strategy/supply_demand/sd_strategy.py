@@ -192,6 +192,10 @@ class SDStrategy:
         rsi_period:           int   = 14,
         rsi_oversold:         float = 35.0,
         rsi_overbought:       float = 65.0,
+        min_sl_pips:          float = 0.0,
+        pip_size:             float = 0.0001,
+        ema_atr_tolerance:    float = 0.0,
+        min_score_product:    float = 0.0,
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -221,6 +225,10 @@ class SDStrategy:
         self.rsi_period           = rsi_period
         self.rsi_oversold         = rsi_oversold
         self.rsi_overbought       = rsi_overbought
+        self.min_sl_pips          = min_sl_pips
+        self.pip_size             = pip_size
+        self.ema_atr_tolerance    = ema_atr_tolerance
+        self.min_score_product    = min_score_product
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -388,6 +396,25 @@ class SDStrategy:
         else:
             _adx_ok_arr = None
 
+        # EMA zone arrays (M1-aligned): ATR-tolerance zone or binary check
+        if self.use_trend_filter and self.use_price_above_ema:
+            if self.ema_atr_tolerance > 0:
+                h15  = m15_df["high"].to_numpy(dtype=float)
+                l15  = m15_df["low"].to_numpy(dtype=float)
+                pc15 = np.concatenate([[_close_m15[0]], _close_m15[:-1]])
+                tr15 = np.maximum(h15 - l15, np.maximum(
+                       np.abs(h15 - pc15), np.abs(l15 - pc15)))
+                _atr15 = pd.Series(tr15).rolling(14, min_periods=1).mean().to_numpy(dtype=float)
+                _tol15 = _atr15 * self.ema_atr_tolerance
+                _ema_long_ok  = (_close_m15 >= _ema50_vals - _tol15)[m1_to_m15]
+                _ema_short_ok = (_close_m15 <= _ema50_vals + _tol15)[m1_to_m15]
+            else:
+                _ema_long_ok  = _above_ema
+                _ema_short_ok = ~_above_ema
+        else:
+            _ema_long_ok  = None
+            _ema_short_ok = None
+
         # H4 trend filter (optional) — resample M15 to 4h, align to M1
         if self.use_h4_trend_filter:
             h4_df = m15_df.resample("4h", closed="left", label="left").agg(
@@ -471,13 +498,12 @@ class SDStrategy:
             # Trend filter
             if self.use_trend_filter:
                 bullish = bool(_trend_bull[i])
-                above   = bool(_above_ema[i])
                 if bullish:
                     candidates &= _dem
                 else:
                     candidates &= ~_dem
-                if self.use_price_above_ema:
-                    if (bullish and not above) or (not bullish and above):
+                if _ema_long_ok is not None:
+                    if not (bool(_ema_long_ok[i]) if bullish else bool(_ema_short_ok[i])):
                         continue
             if not candidates.any():
                 continue
@@ -544,6 +570,8 @@ class SDStrategy:
                     continue
                 if sig.composite_score < self.min_composite_score:
                     continue
+                if self.min_score_product > 0 and sig.zone_score * sig.wyckoff_score < self.min_score_product:
+                    continue
 
                 _last_signal[z_key] = i
                 _daily_count[date_key] = _daily_count.get(date_key, 0) + 1
@@ -569,6 +597,8 @@ class SDStrategy:
         risk  = abs(entry - sl)
 
         if risk < 1e-8:
+            return None
+        if self.min_sl_pips > 0 and risk < self.min_sl_pips * self.pip_size:
             return None
 
         if zone.side == PivotSide.DEMAND:

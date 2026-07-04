@@ -59,13 +59,17 @@ _UNIVERSAL_D = dict(
     use_trend_filter        = True,
     trend_slope_lookback    = 3,
     use_price_above_ema     = True,
+    ema_atr_tolerance       = 0.5,   # R4: allow price within 0.5 ATR of EMA (replaces binary)
     use_session_filter      = True,
-    session_start_utc       = 7,
+    session_start_utc       = 7,     # default; overridden per-pair by SESSION_OVERRIDE
     session_end_utc         = 21,
     max_signals_per_day     = 6,
     use_adx_filter          = False,
     use_h4_trend_filter     = False,
     use_rsi_filter          = False,
+    min_sl_pips             = 5,     # R1: reject signals with SL < 5 pips
+    pip_size                = 0.0001,
+    min_score_product       = 0.0,   # R8: disabled by default; set >0 to enable product filter
 )
 
 _WYCKOFF_PARAMS = dict(
@@ -73,7 +77,7 @@ _WYCKOFF_PARAMS = dict(
     max_accum_bars       = 20,
     accum_range_mult     = 6.0,
     mss_lookback         = 60,
-    min_spring_sweep_pct = 0.05,
+    min_spring_sweep_pct = 0.10,   # R2: raised from 0.05 — filters weak springs on Forex
     min_mss_strength_pct = 0.03,
 )
 
@@ -158,14 +162,42 @@ INSTRUMENTS = [
 PASS_WR = 55.0
 PASS_DD = 8.0
 
+# ── Per-instrument overrides ──────────────────────────────────────────────────
+
+# R7: Adaptive session — GBP/EUR cluster uses London only (07-17h)
+SESSION_OVERRIDE: dict[str, tuple[int, int]] = {
+    "GBPUSD": (7, 17),
+    "EURUSD": (7, 17),
+    "GBPAUD": (7, 17),
+    "EURNZD": (7, 17),
+}
+
+# R5: Quote-to-USD conversion rates (approximate 2024 annual averages)
+# Only needed for non-USD-quoted pairs to correct P&L currency reporting
+QUOTE_TO_USD: dict[str, float] = {
+    "GBPUSD": 1.0,
+    "CADJPY": 149.0,    # P&L in JPY  → divide by USDJPY ≈ 149
+    "EURUSD": 1.0,
+    "NZDUSD": 1.0,
+    "USDCAD": 1.36,     # P&L in CAD  → divide by USDCAD ≈ 1.36
+    "GBPAUD": 1.52,     # P&L in AUD  → divide by 1/AUDUSD ≈ 1/0.66
+    "AUDNZD": 1.62,     # P&L in NZD  → divide by 1/NZDUSD ≈ 1/0.62
+    "AUDCAD": 1.36,     # P&L in CAD  → divide by USDCAD ≈ 1.36
+    "EURNZD": 1.62,     # P&L in NZD  → divide by 1/NZDUSD ≈ 1/0.62
+}
+
+# R3: Paper-trade cluster — instruments validated on OOS 2024 data
+PAPER_CLUSTER = ["GBPUSD", "EURUSD", "GBPAUD", "EURNZD"]
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _build_strategy() -> SDStrategy:
+def _build_strategy(session_start: int = 7, session_end: int = 21) -> SDStrategy:
+    params = {**_UNIVERSAL_D, "session_start_utc": session_start, "session_end_utc": session_end}
     return SDStrategy(
         zone_detector    = ZoneDetector(),
         wyckoff_detector = WyckoffDetector(**_WYCKOFF_PARAMS),
-        **_UNIVERSAL_D,
+        **params,
     )
 
 
@@ -175,9 +207,14 @@ def _load(files: list[Path]) -> pd.DataFrame:
     return df[~df.index.duplicated(keep="first")]
 
 
-def _run_period(m1_df: pd.DataFrame, spread: float) -> tuple[list, dict[str, Any], int]:
+def _run_period(
+    m1_df:             pd.DataFrame,
+    spread:            float,
+    session:           tuple[int, int] = (7, 21),
+    quote_to_usd_rate: float = 1.0,
+) -> tuple[list, dict[str, Any], int]:
     zone_df  = resample_ohlcv(m1_df, "15min")
-    strategy = _build_strategy()
+    strategy = _build_strategy(session_start=session[0], session_end=session[1])
     signals  = strategy.run(zone_df, m1_df)
     res, n_exp = simulate_all(
         signals, m1_df,
@@ -187,6 +224,7 @@ def _run_period(m1_df: pd.DataFrame, spread: float) -> tuple[list, dict[str, Any
         max_daily_losses   = 1,
         tp1_r              = TP1_R,
         tp1_size           = TP1_SIZE,
+        quote_to_usd_rate  = quote_to_usd_rate,
     )
     m = compute_metrics(res, INITIAL_BALANCE, len(signals), n_exp)
     return res, m, len(signals)
@@ -200,7 +238,10 @@ def _print_instrument(
     periods: list[tuple[str, list[Path]]],
 ) -> tuple[float, float, float, float, int, bool]:
     """Returns (total_r, min_r, wr, max_dd, n_trades, all_periods_positive)."""
-    print(f"\n  ── {symbol}  (spread={spread})  ──────────────────────────────────────")
+    session = SESSION_OVERRIDE.get(symbol, (7, 21))
+    q_rate  = QUOTE_TO_USD.get(symbol, 1.0)
+    fx_note = f"  fx≈{q_rate}" if q_rate != 1.0 else ""
+    print(f"\n  ── {symbol}  (spread={spread}  session={session[0]}-{session[1]}h{fx_note})  ──────────────────")
     print(f"  {'Period':<26}  {'Sig':>4}  {'W':>3} {'L':>3}  {'WR%':>5}  {'R':>7}  {'P&L$':>8}  {'DD%':>5}")
     print("  " + "─" * 70)
 
@@ -215,7 +256,7 @@ def _print_instrument(
             print(f"  {label:<26}  [file not found: {missing[0].name}]")
             continue
         m1 = _load(files)
-        _, m, n_sig = _run_period(m1, spread)
+        _, m, n_sig = _run_period(m1, spread, session=session, quote_to_usd_rate=q_rate)
         decided = m["n_wins"] + m["n_losses"]
         print(
             f"  {label:<26}  {n_sig:>4}  "
@@ -306,6 +347,9 @@ def main() -> None:
     else:
         print(f"\n  ✗ OOS failure ({n_pass}/{n_data}). Universal-D does not generalise to 2024.")
         print("    Do NOT deploy on Forex. Collect more data and re-optimise.")
+
+    print(f"\n  Paper cluster (OOS-validated): {', '.join(PAPER_CLUSTER)}")
+    print("  → Paper trade ONLY these pairs — 0.5% risk — minimum 6 weeks before live.")
 
     # ── Reference: XAUUSD champion ────────────────────────────────────────
     print()

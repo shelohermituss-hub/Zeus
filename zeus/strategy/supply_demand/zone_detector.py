@@ -35,6 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from .pivot_candle import PivotCandle, PivotSide, analyze_candle
@@ -437,19 +438,16 @@ class ZoneDetector:
         impulse = df.iloc[pivot_bar + 1 : bos_bar + 1]
         if impulse.empty:
             return 1.0
-
-        ratios = []
-        for _, row in impulse.iterrows():
-            rng = float(row["high"]) - float(row["low"])
-            if rng < _EPS:
-                continue
-            body = abs(float(row["close"]) - float(row["open"]))
-            ratios.append(body / rng)
-
-        if not ratios:
+        highs  = impulse["high"].to_numpy(dtype=float)
+        lows   = impulse["low"].to_numpy(dtype=float)
+        opens  = impulse["open"].to_numpy(dtype=float)
+        closes = impulse["close"].to_numpy(dtype=float)
+        rng  = highs - lows
+        body = np.abs(closes - opens)
+        mask = rng >= _EPS
+        if not mask.any():
             return 1.0
-
-        avg = sum(ratios) / len(ratios)
+        avg = float((body[mask] / rng[mask]).mean())
         if avg >= 0.70: return 2.0
         if avg >= 0.55: return 1.5
         if avg >= 0.40: return 1.0
@@ -484,15 +482,17 @@ class ZoneDetector:
             return 0.0
 
         if side == PivotSide.DEMAND:
-            ref = float(window["low"].quantile(0.25))   # lower quartile = support area
-            for _, row in window.iterrows():
-                if float(row["low"]) < ref and float(row["close"]) > ref:
-                    return 2.0
+            ref  = float(window["low"].quantile(0.25))
+            lows  = window["low"].to_numpy(dtype=float)
+            clos  = window["close"].to_numpy(dtype=float)
+            if ((lows < ref) & (clos > ref)).any():
+                return 2.0
         else:
-            ref = float(window["high"].quantile(0.75))  # upper quartile = resistance area
-            for _, row in window.iterrows():
-                if float(row["high"]) > ref and float(row["close"]) < ref:
-                    return 2.0
+            ref   = float(window["high"].quantile(0.75))
+            highs = window["high"].to_numpy(dtype=float)
+            clos  = window["close"].to_numpy(dtype=float)
+            if ((highs > ref) & (clos < ref)).any():
+                return 2.0
         return 0.0
 
     # ── Private — deduplication ───────────────────────────────────────────────

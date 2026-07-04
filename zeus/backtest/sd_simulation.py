@@ -72,16 +72,17 @@ class TradeResult:
 # ── Simulation ────────────────────────────────────────────────────────────────
 
 def simulate_trade(
-    signal:          Tradeable,
-    df:              pd.DataFrame,    # DataFrame whose bar_index signal refers to
-    equity:          float,
-    risk_pct:        float = 0.01,
-    spread:          float = SPREAD_PER_OZ,
-    use_be:          bool  = False,
-    tp1_r:           float = 0.0,
-    tp1_size:        float = 0.5,
-    slippage_ticks:  float = 0.0,    # F-09: additional slippage beyond spread
-    tick_df:         pd.DataFrame | None = None,  # F-08: M1 data for intrabar SL/TP
+    signal:            Tradeable,
+    df:                pd.DataFrame,
+    equity:            float,
+    risk_pct:          float = 0.01,
+    spread:            float = SPREAD_PER_OZ,
+    use_be:            bool  = False,
+    tp1_r:             float = 0.0,
+    tp1_size:          float = 0.5,
+    slippage_ticks:    float = 0.0,
+    tick_df:           pd.DataFrame | None = None,
+    quote_to_usd_rate: float = 1.0,    # divide P&L by this for non-USD quote pairs (e.g. 149 for CADJPY)
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
@@ -154,16 +155,17 @@ def simulate_trade(
     tp1_hit  = False
 
     def _exit(bar_idx: int, exit_px: float, outcome: str, pnl_r: float) -> TradeResult:
-        # raw_pnl = R-multiple × risk_amount  (works for wins, losses, scratches)
         raw_pnl = size_oz * sl_dist * pnl_r
+        pnl_usd = (raw_pnl - spread_cost) / quote_to_usd_rate
+        sc_usd  = spread_cost / quote_to_usd_rate
         return TradeResult(
             signal          = signal,
             entry_price     = round(effective_entry, 5),
             exit_price      = round(exit_px, 5),
             outcome         = outcome,
             pnl_r           = round(pnl_r, 4),
-            pnl_usd         = round(raw_pnl - spread_cost, 2),
-            spread_cost_usd = round(spread_cost, 2),
+            pnl_usd         = round(pnl_usd, 2),
+            spread_cost_usd = round(sc_usd, 2),
             entry_bar       = entry_bar,
             exit_bar        = bar_idx,
             bars_held       = bar_idx - entry_bar,
@@ -226,9 +228,10 @@ def simulate_all(
     use_be:             bool  = False,
     tp1_r:              float = 0.0,
     tp1_size:           float = 0.5,
-    initial_equity:     float = 10_000.0,   # F-02: was hardcoded inside the function
-    slippage_ticks:     float = 0.0,         # F-09: additional slippage
-    tick_df:            pd.DataFrame | None = None,  # F-08: M1 data for SL/TP resolution
+    initial_equity:     float = 10_000.0,
+    slippage_ticks:     float = 0.0,
+    tick_df:            pd.DataFrame | None = None,
+    quote_to_usd_rate:  float = 1.0,        # divide P&L by this for non-USD quote pairs
 ) -> tuple[list[TradeResult], int]:
     """
     Simulate all signals sequentially with compounding equity.
@@ -262,6 +265,7 @@ def simulate_all(
         result = simulate_trade(
             sig, df, equity, risk_pct, spread, use_be, tp1_r, tp1_size,
             slippage_ticks=slippage_ticks, tick_df=tick_df,
+            quote_to_usd_rate=quote_to_usd_rate,
         )
         if result is None:
             n_expired += 1

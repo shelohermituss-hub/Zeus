@@ -65,7 +65,7 @@ PERIODS = dict(
 
 _BASE_WY = dict(
     lookback=200, max_accum_bars=20, accum_range_mult=6.0,
-    mss_lookback=60, min_spring_sweep_pct=0.05, min_mss_strength_pct=0.03,
+    mss_lookback=60, min_spring_sweep_pct=0.10, min_mss_strength_pct=0.03,
 )
 
 # ── Per-instrument champions from FX-1→FX-4 ──────────────────────────────────

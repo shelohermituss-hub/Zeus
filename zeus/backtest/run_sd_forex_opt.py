@@ -93,7 +93,7 @@ _BASE_WY = dict(
     max_accum_bars       = 20,
     accum_range_mult     = 6.0,
     mss_lookback         = 60,
-    min_spring_sweep_pct = 0.05,
+    min_spring_sweep_pct = 0.10,   # R2: raised from 0.05 — filters weak springs on Forex
     min_mss_strength_pct = 0.03,
 )
 
