@@ -72,19 +72,21 @@ class TradeResult:
 # ── Simulation ────────────────────────────────────────────────────────────────
 
 def simulate_trade(
-    signal:            Tradeable,
-    df:                pd.DataFrame,
-    equity:            float,
-    risk_pct:          float = 0.01,
-    spread:            float = SPREAD_PER_OZ,
-    use_be:            bool  = False,
-    tp1_r:             float = 0.0,
-    tp1_size:          float = 0.5,
-    slippage_ticks:    float = 0.0,
-    tick_df:           pd.DataFrame | None = None,
-    quote_to_usd_rate: float = 1.0,    # divide P&L by this for non-USD quote pairs (e.g. 149 for CADJPY)
-    use_trailing_stop: bool  = False,  # trail SL behind peak price after TP1 hit
-    trailing_factor:   float = 0.5,    # trail distance = trailing_factor × sl_dist (default 0.5R)
+    signal:             Tradeable,
+    df:                 pd.DataFrame,
+    equity:             float,
+    risk_pct:           float = 0.01,
+    spread:             float = SPREAD_PER_OZ,
+    use_be:             bool  = False,
+    tp1_r:              float = 0.0,
+    tp1_size:           float = 0.5,
+    tp2_r:              float = 0.0,    # 2nd partial TP level in R (0 = disabled)
+    tp2_cumulative_pct: float = 0.70,  # cumulative fraction closed by TP2 (default 70%)
+    slippage_ticks:     float = 0.0,
+    tick_df:            pd.DataFrame | None = None,
+    quote_to_usd_rate:  float = 1.0,
+    use_trailing_stop:  bool  = False,
+    trailing_factor:    float = 0.5,
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
@@ -157,6 +159,12 @@ def simulate_trade(
     tp1_hit    = False
     peak_price = effective_entry   # tracks highest price reached (for trailing stop)
 
+    # Partial TP2 state (3-tier exit: TP1 → TP2 → runner)
+    use_tp2 = (tp2_r > 0.0 and use_tp1 and tp2_r > tp1_r and tp2_r < signal.risk_reward)
+    tp2     = ((effective_entry + tp2_r * sl_dist) if is_long
+               else (effective_entry - tp2_r * sl_dist)) if use_tp2 else 0.0
+    tp2_hit = False
+
     def _exit(bar_idx: int, exit_px: float, outcome: str, pnl_r: float) -> TradeResult:
         raw_pnl = size_oz * sl_dist * pnl_r
         pnl_usd = (raw_pnl - spread_cost) / quote_to_usd_rate
@@ -198,7 +206,15 @@ def simulate_trade(
         # ── SL check (pessimistic: always evaluated first) ────────────────────
         sl_hit = (lo <= active_sl) if is_long else (hi >= active_sl)
         if sl_hit:
-            if use_tp1 and tp1_hit:
+            if use_tp2 and tp2_hit:
+                # TP1+TP2 hit; runner exits at active_sl (locked at TP1 price after TP2)
+                tp2_portion = tp2_cumulative_pct - tp1_size
+                runner_size = 1.0 - tp2_cumulative_pct
+                runner_r    = ((active_sl - effective_entry) / sl_dist if is_long
+                               else (effective_entry - active_sl) / sl_dist)
+                total_r = tp1_size * tp1_r + tp2_portion * tp2_r + runner_size * runner_r
+                return _exit(bar_idx, active_sl, "win", total_r)
+            elif use_tp1 and tp1_hit:
                 # TP1 was hit; remaining exits at active_sl (BE or trailed above BE)
                 remaining_r = ((active_sl - effective_entry) / sl_dist if is_long
                                else (effective_entry - active_sl) / sl_dist)
@@ -221,10 +237,20 @@ def simulate_trade(
                 active_sl  = effective_entry  # SL → BE from next evaluation
                 peak_price = tp1              # trailing starts from TP1 level
 
-        # ── TP2 / full TP check ───────────────────────────────────────────────
+        # ── TP2 check (2nd partial exit, SL moves to TP1 price) ─────────────
+        if use_tp2 and tp1_hit and not tp2_hit:
+            if (hi >= tp2 if is_long else lo <= tp2):
+                tp2_hit   = True
+                active_sl = tp1   # SL → TP1 level (runner locks in TP1 gains)
+
+        # ── Full TP check (runner reaches signal.risk_reward target) ─────────
         tp_hit = (hi >= tp) if is_long else (lo <= tp)
         if tp_hit:
-            if use_tp1 and tp1_hit:
+            if use_tp2 and tp2_hit:
+                tp2_portion = tp2_cumulative_pct - tp1_size
+                runner_size = 1.0 - tp2_cumulative_pct
+                pnl_r = tp1_size * tp1_r + tp2_portion * tp2_r + runner_size * signal.risk_reward
+            elif use_tp1 and tp1_hit:
                 pnl_r = tp1_size * tp1_r + (1.0 - tp1_size) * signal.risk_reward
             else:
                 pnl_r = signal.risk_reward
@@ -243,6 +269,8 @@ def simulate_all(
     use_be:             bool  = False,
     tp1_r:              float = 0.0,
     tp1_size:           float = 0.5,
+    tp2_r:              float = 0.0,
+    tp2_cumulative_pct: float = 0.70,
     initial_equity:     float = 10_000.0,
     slippage_ticks:     float = 0.0,
     tick_df:            pd.DataFrame | None = None,
@@ -281,6 +309,7 @@ def simulate_all(
 
         result = simulate_trade(
             sig, df, equity, risk_pct, spread, use_be, tp1_r, tp1_size,
+            tp2_r=tp2_r, tp2_cumulative_pct=tp2_cumulative_pct,
             slippage_ticks=slippage_ticks, tick_df=tick_df,
             quote_to_usd_rate=quote_to_usd_rate,
             use_trailing_stop=use_trailing_stop, trailing_factor=trailing_factor,
