@@ -198,6 +198,7 @@ class SDStrategy:
         min_score_product:    float = 0.0,
         use_first_touch_only: bool  = False,
         first_touch_window:   int   = 60,   # M1 bars allowed after first touch (60 = 1 hour)
+        use_wyckoff_sl:       bool  = False, # when True, SL = wyckoff.manip_extreme (M1 wick) instead of zone.wick_extreme (M15)
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -233,6 +234,7 @@ class SDStrategy:
         self.min_score_product    = min_score_product
         self.use_first_touch_only = use_first_touch_only
         self.first_touch_window   = first_touch_window
+        self.use_wyckoff_sl       = use_wyckoff_sl
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -601,8 +603,15 @@ class SDStrategy:
         htf_fibs:  Optional[FibLevels],
     ) -> Optional[SDSignal]:
         entry = wyckoff.mss_close
-        sl    = zone.wick_extreme
+        sl    = wyckoff.manip_extreme if self.use_wyckoff_sl else zone.wick_extreme
         risk  = abs(entry - sl)
+
+        # Sanity: sl must be on the correct side of entry
+        if self.use_wyckoff_sl:
+            if zone.side == PivotSide.DEMAND and sl >= entry:
+                return None
+            if zone.side != PivotSide.DEMAND and sl <= entry:
+                return None
 
         if risk < 1e-8:
             return None
