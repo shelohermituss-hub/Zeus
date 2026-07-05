@@ -72,31 +72,45 @@ class TradeResult:
 # ── Simulation ────────────────────────────────────────────────────────────────
 
 def simulate_trade(
-    signal:             Tradeable,
-    df:                 pd.DataFrame,
-    equity:             float,
-    risk_pct:           float = 0.01,
-    spread:             float = SPREAD_PER_OZ,
-    use_be:             bool  = False,
-    tp1_r:              float = 0.0,
-    tp1_size:           float = 0.5,
-    tp2_r:              float = 0.0,    # 2nd partial TP level in R (0 = disabled)
-    tp2_cumulative_pct: float = 0.70,  # cumulative fraction closed by TP2 (default 70%)
-    slippage_ticks:     float = 0.0,
-    tick_df:            pd.DataFrame | None = None,
-    quote_to_usd_rate:  float = 1.0,
-    use_trailing_stop:  bool  = False,
-    trailing_factor:    float = 0.5,
+    signal:              Tradeable,
+    df:                  pd.DataFrame,
+    equity:              float,
+    risk_pct:            float = 0.01,
+    spread:              float = SPREAD_PER_OZ,
+    use_be:              bool  = False,
+    tp1_r:               float = 0.0,
+    tp1_size:            float = 0.5,
+    tp2_r:               float = 0.0,    # 2nd partial TP level in R (0 = disabled)
+    tp2_cumulative_pct:  float = 0.70,  # cumulative fraction closed by TP2 (default 70%)
+    tp3_r:               float = 0.0,   # 3rd partial TP level in R (0 = disabled)
+    tp3_cumulative_pct:  float = 0.85,  # cumulative fraction closed by TP3
+    momentum_tp2:        bool  = False,  # adjust TP2 close size dynamically by bar strength
+    momentum_strong_pct: float = 0.40,  # tp2 cumulative pct when bar confirms momentum
+    slippage_ticks:      float = 0.0,
+    tick_df:             pd.DataFrame | None = None,
+    quote_to_usd_rate:   float = 1.0,
+    use_trailing_stop:   bool  = False,
+    trailing_factor:     float = 0.5,
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
 
     tp1_r: if > 0 and < signal.risk_reward, partial take-profit at tp1_r × SL-dist.
-           tp1_size fraction of the position exits at TP1; SL moves to break-even;
-           the remainder runs to the full TP (signal.risk_reward × SL-dist).
+           tp1_size fraction of the position exits at TP1 (set to 0 for BE-only);
+           SL moves to break-even; the remainder runs to subsequent TP levels.
            Outcome = "win" whenever TP1 is hit (price moved in our direction).
            Outcome = "loss" only if original SL is hit before TP1.
            SL check is always done first (pessimistic convention).
+
+    tp3_r / tp3_cumulative_pct: optional 4th tier (TP1→TP2→TP3→Runner).
+           TP3 is active only when use_tp2 is True and tp3_r > tp2_r.
+           After TP3 hit, SL is locked at TP2 level.
+           tp3_cumulative_pct is the total fraction closed through TP3.
+
+    momentum_tp2: when True, checks bar strength at TP2 hit.
+           If the bar closes in the upper 60 % of its range (for longs),
+           tp2_cumulative_pct is overridden to momentum_strong_pct (smaller close,
+           more position left to run). Otherwise the default tp2_cumulative_pct applies.
 
     use_be: if True (and tp1_r == 0), move SL to break-even once +1R is reached.
             Ignored when tp1_r > 0 (partial TP takes over the BE role).
@@ -163,7 +177,14 @@ def simulate_trade(
     use_tp2 = (tp2_r > 0.0 and use_tp1 and tp2_r > tp1_r and tp2_r < signal.risk_reward)
     tp2     = ((effective_entry + tp2_r * sl_dist) if is_long
                else (effective_entry - tp2_r * sl_dist)) if use_tp2 else 0.0
-    tp2_hit = False
+    tp2_hit      = False
+    actual_tp2_pct = tp2_cumulative_pct  # may be overridden by momentum check
+
+    # Partial TP3 state (4-tier exit: TP1 → TP2 → TP3 → runner)
+    use_tp3 = (tp3_r > 0.0 and use_tp2 and tp3_r > tp2_r and tp3_r < signal.risk_reward)
+    tp3     = ((effective_entry + tp3_r * sl_dist) if is_long
+               else (effective_entry - tp3_r * sl_dist)) if use_tp3 else 0.0
+    tp3_hit = False
 
     def _exit(bar_idx: int, exit_px: float, outcome: str, pnl_r: float) -> TradeResult:
         raw_pnl = size_oz * sl_dist * pnl_r
@@ -187,6 +208,7 @@ def simulate_trade(
         bar = scan_df.iloc[bar_idx]
         lo  = float(bar["low"])
         hi  = float(bar["high"])
+        cl  = float(bar["close"])
 
         # Classic BE activation (only when partial TP not in use)
         if use_be and not use_tp1 and not be_active:
@@ -206,13 +228,23 @@ def simulate_trade(
         # ── SL check (pessimistic: always evaluated first) ────────────────────
         sl_hit = (lo <= active_sl) if is_long else (hi >= active_sl)
         if sl_hit:
-            if use_tp2 and tp2_hit:
-                # TP1+TP2 hit; runner exits at active_sl (locked at TP1 price after TP2)
-                tp2_portion = tp2_cumulative_pct - tp1_size
-                runner_size = 1.0 - tp2_cumulative_pct
-                runner_r    = ((active_sl - effective_entry) / sl_dist if is_long
-                               else (effective_entry - active_sl) / sl_dist)
-                total_r = tp1_size * tp1_r + tp2_portion * tp2_r + runner_size * runner_r
+            runner_r = ((active_sl - effective_entry) / sl_dist if is_long
+                        else (effective_entry - active_sl) / sl_dist)
+            if use_tp3 and tp3_hit:
+                # TP1+TP2+TP3 hit; runner exits at SL (locked at TP2 level after TP3)
+                tp3_portion = tp3_cumulative_pct - actual_tp2_pct
+                runner_size = 1.0 - tp3_cumulative_pct
+                total_r = (tp1_size * tp1_r
+                           + (actual_tp2_pct - tp1_size) * tp2_r
+                           + tp3_portion * tp3_r
+                           + runner_size * runner_r)
+                return _exit(bar_idx, active_sl, "win", total_r)
+            elif use_tp2 and tp2_hit:
+                # TP1+TP2 hit; runner exits at active_sl (locked at TP1 level after TP2)
+                runner_size = 1.0 - actual_tp2_pct
+                total_r = (tp1_size * tp1_r
+                           + (actual_tp2_pct - tp1_size) * tp2_r
+                           + runner_size * runner_r)
                 return _exit(bar_idx, active_sl, "win", total_r)
             elif use_tp1 and tp1_hit:
                 # TP1 was hit; remaining exits at active_sl (BE or trailed above BE)
@@ -225,31 +257,49 @@ def simulate_trade(
             else:
                 # F-09: slippage applied on SL exit (stop orders get market-order fill)
                 sl_exit    = (active_sl - slippage_ticks) if is_long else (active_sl + slippage_ticks)
-                # Direction-aware: long loses when price falls (sl_exit < entry → negative);
-                # short loses when price rises (sl_exit > entry → must negate).
                 loss_pnl_r = (sl_exit - effective_entry) / sl_dist if is_long else (effective_entry - sl_exit) / sl_dist
                 return _exit(bar_idx, sl_exit, "loss", loss_pnl_r)
 
-        # ── TP1 check (partial exit, SL moves to BE; trailing starts from TP1) ─
+        # ── TP1 check (partial exit or BE-only, SL moves to BE) ──────────────
         if use_tp1 and not tp1_hit:
             if (hi >= tp1 if is_long else lo <= tp1):
                 tp1_hit    = True
-                active_sl  = effective_entry  # SL → BE from next evaluation
+                active_sl  = effective_entry  # SL → BE
                 peak_price = tp1              # trailing starts from TP1 level
 
-        # ── TP2 check (2nd partial exit, SL moves to TP1 price) ─────────────
+        # ── TP2 check (2nd partial exit, SL moves to TP1/BE level) ──────────
         if use_tp2 and tp1_hit and not tp2_hit:
             if (hi >= tp2 if is_long else lo <= tp2):
                 tp2_hit   = True
-                active_sl = tp1   # SL → TP1 level (runner locks in TP1 gains)
+                active_sl = tp1   # SL → TP1 level (= BE when tp1_size=0)
+                if momentum_tp2:
+                    bar_range = hi - lo
+                    if bar_range > 1e-6:
+                        close_pct = (cl - lo) / bar_range if is_long else (hi - cl) / bar_range
+                        if close_pct >= 0.60:
+                            actual_tp2_pct = momentum_strong_pct
+
+        # ── TP3 check (3rd partial exit, SL moves to TP2 level) ─────────────
+        if use_tp3 and tp2_hit and not tp3_hit:
+            if (hi >= tp3 if is_long else lo <= tp3):
+                tp3_hit   = True
+                active_sl = tp2   # SL → TP2 level (runner locks in TP2 gains)
 
         # ── Full TP check (runner reaches signal.risk_reward target) ─────────
         tp_hit = (hi >= tp) if is_long else (lo <= tp)
         if tp_hit:
-            if use_tp2 and tp2_hit:
-                tp2_portion = tp2_cumulative_pct - tp1_size
-                runner_size = 1.0 - tp2_cumulative_pct
-                pnl_r = tp1_size * tp1_r + tp2_portion * tp2_r + runner_size * signal.risk_reward
+            if use_tp3 and tp3_hit:
+                tp3_portion = tp3_cumulative_pct - actual_tp2_pct
+                runner_size = 1.0 - tp3_cumulative_pct
+                pnl_r = (tp1_size * tp1_r
+                         + (actual_tp2_pct - tp1_size) * tp2_r
+                         + tp3_portion * tp3_r
+                         + runner_size * signal.risk_reward)
+            elif use_tp2 and tp2_hit:
+                runner_size = 1.0 - actual_tp2_pct
+                pnl_r = (tp1_size * tp1_r
+                         + (actual_tp2_pct - tp1_size) * tp2_r
+                         + runner_size * signal.risk_reward)
             elif use_tp1 and tp1_hit:
                 pnl_r = tp1_size * tp1_r + (1.0 - tp1_size) * signal.risk_reward
             else:
@@ -260,23 +310,27 @@ def simulate_trade(
 
 
 def simulate_all(
-    signals:            list[Tradeable],
-    df:                 pd.DataFrame,
-    risk_pct:           float = 0.01,
-    spread:             float = SPREAD_PER_OZ,
-    max_daily_losses:   int   = 0,
-    max_monthly_losses: int   = 0,
-    use_be:             bool  = False,
-    tp1_r:              float = 0.0,
-    tp1_size:           float = 0.5,
-    tp2_r:              float = 0.0,
-    tp2_cumulative_pct: float = 0.70,
-    initial_equity:     float = 10_000.0,
-    slippage_ticks:     float = 0.0,
-    tick_df:            pd.DataFrame | None = None,
-    quote_to_usd_rate:  float = 1.0,
-    use_trailing_stop:  bool  = False,
-    trailing_factor:    float = 0.5,
+    signals:             list[Tradeable],
+    df:                  pd.DataFrame,
+    risk_pct:            float = 0.01,
+    spread:              float = SPREAD_PER_OZ,
+    max_daily_losses:    int   = 0,
+    max_monthly_losses:  int   = 0,
+    use_be:              bool  = False,
+    tp1_r:               float = 0.0,
+    tp1_size:            float = 0.5,
+    tp2_r:               float = 0.0,
+    tp2_cumulative_pct:  float = 0.70,
+    tp3_r:               float = 0.0,
+    tp3_cumulative_pct:  float = 0.85,
+    momentum_tp2:        bool  = False,
+    momentum_strong_pct: float = 0.40,
+    initial_equity:      float = 10_000.0,
+    slippage_ticks:      float = 0.0,
+    tick_df:             pd.DataFrame | None = None,
+    quote_to_usd_rate:   float = 1.0,
+    use_trailing_stop:   bool  = False,
+    trailing_factor:     float = 0.5,
 ) -> tuple[list[TradeResult], int]:
     """
     Simulate all signals sequentially with compounding equity.
@@ -310,6 +364,8 @@ def simulate_all(
         result = simulate_trade(
             sig, df, equity, risk_pct, spread, use_be, tp1_r, tp1_size,
             tp2_r=tp2_r, tp2_cumulative_pct=tp2_cumulative_pct,
+            tp3_r=tp3_r, tp3_cumulative_pct=tp3_cumulative_pct,
+            momentum_tp2=momentum_tp2, momentum_strong_pct=momentum_strong_pct,
             slippage_ticks=slippage_ticks, tick_df=tick_df,
             quote_to_usd_rate=quote_to_usd_rate,
             use_trailing_stop=use_trailing_stop, trailing_factor=trailing_factor,
