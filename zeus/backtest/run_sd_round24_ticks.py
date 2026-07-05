@@ -299,7 +299,7 @@ def main() -> None:
             if mode != "m1" and tick_df is None:
                 print(f"  ⚠ Ticks manquants pour {year} — fallback M1 pour cette période")
 
-            m, n_sig = _run_period(m1_df, tick_df, mode if tick_df else "m1")
+            m, n_sig = _run_period(m1_df, tick_df, mode if tick_df is not None else "m1")
             rows.append((period_label, m, n_sig))
 
         tr, mr, wr, dd = _print_table(mode_label, rows)
