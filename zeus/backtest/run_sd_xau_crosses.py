@@ -1,9 +1,9 @@
 """
-S&D V4 — Or vs autres devises · XAUEUR · XAUAUD · XAUCHF · XAUGBP
-====================================================================
+S&D V4 — Or vs autres devises · XAUEUR · XAUAUD · XAUCHF · XAUGBP · USATECHIDXUSD
+====================================================================================
 
 Teste la stratégie S&D (V4 bidirectionnel, même paramètres que XAUUSD champion)
-sur les paires or/devises hors USD.
+sur les paires or/devises hors USD et sur le Nasdaq 100 (USATECHIDXUSD).
 
 Protocole
 ---------
@@ -15,16 +15,18 @@ Données attendues (format histdata MT4/MT5, même structure que XAUUSD) :
   data/historical/xauaud/m1/DAT_MT_XAUAUD_M1_<YYYY>.csv
   data/historical/xauchf/m1/DAT_MT_XAUCHF_M1_<YYYY>.csv
   data/historical/xaugbp/m1/DAT_MT_XAUGBP_M1_<YYYY>.csv
+  data/historical/usatechidxusd/m1/DAT_MT_USATECHIDXUSD_M1_<YYYY>.csv
 
   Année 2026 Jan-Jun : nommer les fichiers mensuels
   DAT_MT_XAUEUR_M1_202601.csv … DAT_MT_XAUEUR_M1_202606.csv
   ou fichier annuel DAT_MT_XAUEUR_M1_202601-202606.csv
 
 Spreads (valeurs typiques retail, ajuster selon broker) :
-  XAUEUR  0.50 EUR/oz   q2u≈0.926  (USDEUR = 1/EURUSD)
-  XAUAUD  0.80 AUD/oz   q2u≈1.538  (USDAUD = 1/AUDUSD)
-  XAUCHF  0.50 CHF/oz   q2u≈0.900  (USDCHF)
-  XAUGBP  0.40 GBP/oz   q2u≈0.787  (USDGBP = 1/GBPUSD)
+  XAUEUR        0.50 EUR/oz    q2u≈0.926  (USDEUR = 1/EURUSD)
+  XAUAUD        0.80 AUD/oz    q2u≈1.538  (USDAUD = 1/AUDUSD)
+  XAUCHF        0.50 CHF/oz    q2u≈0.900  (USDCHF)
+  XAUGBP        0.40 GBP/oz    q2u≈0.787  (USDGBP = 1/GBPUSD)
+  USATECHIDXUSD 1.00 USD/point q2u=1.000  (déjà en USD, pas de conversion)
 
 quote_to_usd_rate convention : 1 quote-currency = (1/q2u) USD
   → pnl_usd = pnl_quote / q2u   (ex. EUR: pnl_usd = pnl_eur / 0.926 = pnl_eur × 1.08)
@@ -133,6 +135,13 @@ PAIRS: list[dict] = [
         spread = 0.40,
         q2u    = 0.787,   # USDGBP ≈ 1/1.27
         note   = "spread≈0.40 GBP/oz · q2u=1/GBPUSD≈0.787",
+    ),
+    dict(
+        symbol = "USATECHIDXUSD",
+        folder = "usatechidxusd",
+        spread = 1.00,    # ~1 point USD (NAS100 CFD typique retail)
+        q2u    = 1.000,   # déjà en USD, pas de conversion
+        note   = "spread≈1.0 USD/pt · q2u=1.0 (Nasdaq 100 CFD)",
     ),
 ]
 
@@ -309,7 +318,7 @@ def _print_variant_block(variant_name: str, pair_results: dict) -> dict:
 
 def main() -> None:
     print(_SEP2)
-    print("  S&D — Or vs devises · XAUEUR · XAUAUD · XAUCHF · XAUGBP")
+    print("  S&D — Or vs devises · XAUEUR · XAUAUD · XAUCHF · XAUGBP · USATECHIDXUSD (Nasdaq 100)")
     print("  V4 bidirectionnel (WS_long≥5.9 · WS_short≥8.5) · 4T : TP1@1R · TP2@3R(60%) · TP3@8R(85%) · Runner@20R")
     print(_SEP2)
 
@@ -388,12 +397,9 @@ def main() -> None:
             f"{t['wr']:>5.1f}%  {t['tr']:>+7.2f}  {t['max_dd']:>5.1f}%  {delta}{best}"
         )
 
-    print(f"\n  Spreads : XAUEUR={PAIRS[0]['spread']} EUR/oz  "
-          f"XAUAUD={PAIRS[1]['spread']} AUD/oz  "
-          f"XAUCHF={PAIRS[2]['spread']} CHF/oz  "
-          f"XAUGBP={PAIRS[3]['spread']} GBP/oz")
-    print(f"  q2u     : XAUEUR≈{PAIRS[0]['q2u']}  XAUAUD≈{PAIRS[1]['q2u']}  "
-          f"XAUCHF≈{PAIRS[2]['q2u']}  XAUGBP≈{PAIRS[3]['q2u']}")
+    print("\n  Paramètres par instrument :")
+    for p in PAIRS:
+        print(f"    {p['symbol']:<16}  {p['note']}")
     print(f"  Référence XAUUSD V4 : +113.90R · WR=73.7% (2024+2025+2026 Jan-Jun)")
     print(f"\n{_SEP2}")
     print("  Fin")
