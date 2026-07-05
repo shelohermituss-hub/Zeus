@@ -411,7 +411,7 @@ class WyckoffDetector:
             for si in range(accum_end, search_end - 1):
                 if highs[si] > accum_h and closes[si] < accum_h:
                     if (highs[si] - accum_h) < min_sweep:
-                        break
+                        continue  # weak upthrust — try next bar in same window
                     for mi in range(si + 1, min(n, si + mss_lb + 1)):
                         if closes[mi] < accum_l:
                             if mi == n - 1 and (accum_l - closes[mi]) >= min_mss_v:
@@ -495,7 +495,7 @@ class WyckoffDetector:
                 if highs[si] > accum_h and closes[si] < accum_h:
                     # Upthrust must breach the accumulation ceiling by a meaningful amount
                     if (highs[si] - accum_h) < min_sweep:
-                        break  # weak upthrust — try a different accum window
+                        continue  # weak upthrust — try next bar in same window
                     for mi in range(si + 1, min(n, si + self.mss_lookback + 1)):
                         if closes[mi] < accum_l:
                             if mi == n - 1 and (accum_l - closes[mi]) >= min_mss:

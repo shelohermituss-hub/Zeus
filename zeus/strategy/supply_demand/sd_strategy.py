@@ -129,8 +129,13 @@ class SDStrategy:
     signal_cooldown    : M1 bars before the same zone can re-signal (default 30)
     use_trend_filter     : when True, demand zones require a bullish M15 EMA50 slope
                            and supply zones require a bearish slope (default True)
-    trend_slope_lookback : number of M15 bars used to measure the EMA50 slope;
-                           larger → smoother, less reactive (default 8)
+    trend_slope_lookback : M15 bars for the EMA50 slope used for LONG entries;
+                           short lookback responds quickly to counter-trend bounces
+                           (default 8)
+    trend_slope_lookback_short : M15 bars for the EMA50 slope used for SHORT entries;
+                           longer lookback captures the macro bear trend, so a
+                           counter-trend rally to a supply zone doesn't block the
+                           short entry; None → same as trend_slope_lookback (default)
     use_price_above_ema  : when True, also require M15 close > EMA50 for demand
                            (and close < EMA50 for supply) — harder confirmation
     use_session_filter   : when True, only emit signals during active trading hours
@@ -173,6 +178,7 @@ class SDStrategy:
         signal_cooldown:     int   = 30,
         use_trend_filter:    bool  = True,
         trend_slope_lookback: int  = 8,
+        trend_slope_lookback_short: Optional[int] = None,
         use_price_above_ema: bool  = True,
         use_session_filter:  bool  = True,
         session_start_utc:   int   = 7,
@@ -200,6 +206,8 @@ class SDStrategy:
         first_touch_window:   int   = 60,   # M1 bars allowed after first touch (60 = 1 hour)
         use_wyckoff_sl:       bool  = False, # when True, SL = wyckoff.manip_extreme (M1 wick) instead of zone.wick_extreme (M15)
         max_sl_pips:          float = 0.0,   # when > 0, reject signals whose SL distance exceeds this many pips
+        use_price_above_ema_for_shorts: bool = False,  # when False (default), skip price-vs-EMA check for shorts
+                                                        # (EMA slope is sufficient; supply zones form above declining EMA)
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -208,8 +216,12 @@ class SDStrategy:
         self.min_wyckoff_score       = min_wyckoff_score
         self.min_composite_score     = min_composite_score
         self.signal_cooldown         = signal_cooldown
-        self.use_trend_filter        = use_trend_filter
-        self.trend_slope_lookback    = trend_slope_lookback
+        self.use_trend_filter              = use_trend_filter
+        self.trend_slope_lookback          = trend_slope_lookback
+        self.trend_slope_lookback_short    = (
+            trend_slope_lookback_short if trend_slope_lookback_short is not None
+            else trend_slope_lookback
+        )
         self.use_price_above_ema     = use_price_above_ema
         self.use_session_filter      = use_session_filter
         self.session_start_utc       = session_start_utc
@@ -235,8 +247,9 @@ class SDStrategy:
         self.min_score_product    = min_score_product
         self.use_first_touch_only = use_first_touch_only
         self.first_touch_window   = first_touch_window
-        self.use_wyckoff_sl       = use_wyckoff_sl
-        self.max_sl_pips          = max_sl_pips
+        self.use_wyckoff_sl                 = use_wyckoff_sl
+        self.max_sl_pips                    = max_sl_pips
+        self.use_price_above_ema_for_shorts = use_price_above_ema_for_shorts
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -395,6 +408,19 @@ class SDStrategy:
         _trend_bull_m15 = (_ema50_vals > _ema50_prev)
         _trend_bull_m15[:_slope_lb] = False
         _trend_bull = _trend_bull_m15[m1_to_m15]               # M1-aligned
+
+        # Separate slope check for shorts with a potentially longer lookback.
+        # During a counter-trend rally to a supply zone the short-term EMA slope
+        # turns positive (looks "bullish"), blocking the short entry.  A longer
+        # lookback preserves the macro-bear classification through these bounces.
+        _slope_lb_s = self.trend_slope_lookback_short
+        _ema50_prev_s = np.empty_like(_ema50_vals)
+        _ema50_prev_s[:_slope_lb_s] = _ema50_vals[0]
+        _ema50_prev_s[_slope_lb_s:] = _ema50_vals[:-_slope_lb_s]
+        _trend_bear_m15 = (_ema50_vals < _ema50_prev_s)
+        _trend_bear_m15[:_slope_lb_s] = False
+        _trend_bear = _trend_bear_m15[m1_to_m15]               # M1-aligned (short direction)
+
         _close_m15  = m15_df["close"].to_numpy(dtype=float)
         _above_ema  = (_close_m15 > _ema50_vals)[m1_to_m15]    # M1-aligned
 
@@ -405,6 +431,10 @@ class SDStrategy:
             _adx_ok_arr = None
 
         # EMA zone arrays (M1-aligned): ATR-tolerance zone or binary check
+        # For shorts: supply zones form above a declining EMA50. Requiring price
+        # to be below EMA50 blocks entries at supply zones that are above the EMA.
+        # use_price_above_ema_for_shorts=False (default) skips the price-vs-EMA
+        # check for shorts; only the EMA slope (trend_filter) is required.
         if self.use_trend_filter and self.use_price_above_ema:
             if self.ema_atr_tolerance > 0:
                 h15  = m15_df["high"].to_numpy(dtype=float)
@@ -415,10 +445,10 @@ class SDStrategy:
                 _atr15 = pd.Series(tr15).rolling(14, min_periods=1).mean().to_numpy(dtype=float)
                 _tol15 = _atr15 * self.ema_atr_tolerance
                 _ema_long_ok  = (_close_m15 >= _ema50_vals - _tol15)[m1_to_m15]
-                _ema_short_ok = (_close_m15 <= _ema50_vals + _tol15)[m1_to_m15]
+                _ema_short_ok = (_close_m15 <= _ema50_vals + _tol15)[m1_to_m15] if self.use_price_above_ema_for_shorts else None
             else:
                 _ema_long_ok  = _above_ema
-                _ema_short_ok = ~_above_ema
+                _ema_short_ok = ~_above_ema if self.use_price_above_ema_for_shorts else None
         else:
             _ema_long_ok  = None
             _ema_short_ok = None
@@ -505,14 +535,29 @@ class SDStrategy:
 
             # Trend filter
             if self.use_trend_filter:
-                bullish = bool(_trend_bull[i])
-                if bullish:
-                    candidates &= _dem
-                else:
-                    candidates &= ~_dem
-                if _ema_long_ok is not None:
-                    if not (bool(_ema_long_ok[i]) if bullish else bool(_ema_short_ok[i])):
-                        continue
+                long_ok  = bool(_trend_bull[i])   # short lookback — responds to local bounces
+                short_ok = bool(_trend_bear[i])   # longer lookback — captures macro direction
+                # Keep demand zones only when local trend is bullish;
+                # keep supply zones only when macro trend is bearish.
+                # Both can be true simultaneously during a counter-trend rally in a
+                # bear market (short-term slope up, long-term slope still down).
+                keep = np.zeros(len(candidates), dtype=bool)
+                if long_ok:
+                    keep |= (candidates & _dem)
+                if short_ok:
+                    keep |= (candidates & ~_dem)
+                candidates = keep
+                # EMA price-position check:
+                #   longs  — require price above EMA50 (demand zones near EMA in bull market)
+                #   shorts — by default skip this check (use_price_above_ema_for_shorts=False)
+                #            because supply zones sit above a declining EMA50; entering a
+                #            short at a supply zone that is above EMA50 is correct behavior
+                if long_ok and _ema_long_ok is not None:
+                    if not bool(_ema_long_ok[i]):
+                        candidates &= ~_dem  # remove long candidates; keep shorts
+                if short_ok and _ema_short_ok is not None:
+                    if not bool(_ema_short_ok[i]):
+                        candidates &= _dem   # remove short candidates; keep longs
             if not candidates.any():
                 continue
 

@@ -59,19 +59,20 @@ _4T_BEST = dict(
 )
 
 _BASE = dict(
-    min_zone_score       = 5.0,
-    min_composite_score  = 5.0,
-    signal_cooldown      = 10,
-    use_trend_filter     = True,
-    trend_slope_lookback = 3,
-    use_price_above_ema  = True,
-    use_session_filter   = True,
-    session_start_utc    = 7,
-    session_end_utc      = 21,
-    max_signals_per_day  = 6,
-    use_adx_filter       = False,
-    use_h4_trend_filter  = False,
-    use_rsi_filter       = False,
+    min_zone_score              = 5.0,
+    min_composite_score         = 5.0,
+    signal_cooldown             = 10,
+    use_trend_filter            = True,
+    trend_slope_lookback        = 3,
+    trend_slope_lookback_short  = 20,  # longer lookback for shorts: allows entry during bounces
+    use_price_above_ema         = True,
+    use_session_filter          = True,
+    session_start_utc           = 7,
+    session_end_utc             = 21,
+    max_signals_per_day         = 6,
+    use_adx_filter              = False,
+    use_h4_trend_filter         = False,
+    use_rsi_filter              = False,
 )
 
 # ── Variantes ─────────────────────────────────────────────────────────────────

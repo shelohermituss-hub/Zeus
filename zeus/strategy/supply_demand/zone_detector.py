@@ -44,13 +44,14 @@ from .pivot_candle import PivotCandle, PivotSide, analyze_candle
 
 _EPS = 1e-8
 
-MIN_PIVOT_SCORE   = 4.0
-MIN_ZONE_SCORE    = 4.0
-SWING_LOOKBACK    = 5     # bars each side to confirm a swing H/L
-BOS_LOOKBACK      = 20    # bars back to find the swing level for BOS
-BOS_MAX_BARS      = 40    # max bars forward to find BOS after pivot
-MAX_BASE_CANDLES  = 10    # cap on base width for time scoring
-ATR_PERIOD        = 14
+MIN_PIVOT_SCORE        = 4.0
+MIN_ZONE_SCORE         = 4.0
+SWING_LOOKBACK         = 5     # bars each side to confirm a swing H/L
+BOS_LOOKBACK           = 20    # bars back to find the swing level for BOS
+BOS_MAX_BARS           = 40    # max bars forward to find bullish BOS after demand pivot
+BOS_MAX_BARS_SUPPLY    = 80    # max bars for bearish BOS — bear market corrections are slower
+MAX_BASE_CANDLES       = 10    # cap on base width for time scoring
+ATR_PERIOD             = 14
 
 
 # ── Score & zone data types ───────────────────────────────────────────────────
@@ -160,21 +161,23 @@ class ZoneDetector:
 
     def __init__(
         self,
-        swing_lookback:   int   = SWING_LOOKBACK,
-        bos_lookback:     int   = BOS_LOOKBACK,
-        bos_max_bars:     int   = BOS_MAX_BARS,
-        max_base_candles: int   = MAX_BASE_CANDLES,
-        min_pivot_score:  float = MIN_PIVOT_SCORE,
-        min_zone_score:   float = MIN_ZONE_SCORE,
-        atr_period:       int   = ATR_PERIOD,
+        swing_lookback:        int   = SWING_LOOKBACK,
+        bos_lookback:          int   = BOS_LOOKBACK,
+        bos_max_bars:          int   = BOS_MAX_BARS,
+        bos_max_bars_supply:   int   = BOS_MAX_BARS_SUPPLY,
+        max_base_candles:      int   = MAX_BASE_CANDLES,
+        min_pivot_score:       float = MIN_PIVOT_SCORE,
+        min_zone_score:        float = MIN_ZONE_SCORE,
+        atr_period:            int   = ATR_PERIOD,
     ) -> None:
-        self.swing_lookback   = swing_lookback
-        self.bos_lookback     = bos_lookback
-        self.bos_max_bars     = bos_max_bars
-        self.max_base_candles = max_base_candles
-        self.min_pivot_score  = min_pivot_score
-        self.min_zone_score   = min_zone_score
-        self.atr_period       = atr_period
+        self.swing_lookback      = swing_lookback
+        self.bos_lookback        = bos_lookback
+        self.bos_max_bars        = bos_max_bars
+        self.bos_max_bars_supply = bos_max_bars_supply
+        self.max_base_candles    = max_base_candles
+        self.min_pivot_score     = min_pivot_score
+        self.min_zone_score      = min_zone_score
+        self.atr_period          = atr_period
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -228,7 +231,7 @@ class ZoneDetector:
                             zones.append(z)
 
             elif pc.side == PivotSide.SUPPLY and self._is_swing_high(df, i):
-                bos_bar, bos_lvl = self._find_bearish_bos(df, i, atr)
+                bos_bar, bos_lvl = self._find_bearish_bos(df, i, atr, self.bos_max_bars_supply)
                 if bos_bar is not None:
                     z = self._build_zone(df, i, pc, bos_bar, bos_lvl, atr, PivotSide.SUPPLY)
                     if z and z.score.total >= self.min_zone_score:
@@ -321,6 +324,7 @@ class ZoneDetector:
         df:        pd.DataFrame,
         pivot_bar: int,
         atr:       pd.Series,
+        max_bars:  Optional[int] = None,
     ) -> tuple[Optional[int], Optional[float]]:
         """
         Find the first bar after pivot_bar that closes below the prior swing low.
@@ -329,7 +333,8 @@ class ZoneDetector:
         lb_start  = max(0, pivot_bar - self.bos_lookback)
         bos_level = float(df.iloc[lb_start:pivot_bar]["low"].min())
 
-        end = min(len(df), pivot_bar + self.bos_max_bars + 1)
+        _max = max_bars if max_bars is not None else self.bos_max_bars
+        end = min(len(df), pivot_bar + _max + 1)
         for j in range(pivot_bar + 1, end):
             if float(df.iloc[j]["close"]) < bos_level:
                 return j, bos_level
