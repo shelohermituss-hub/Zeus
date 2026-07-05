@@ -94,12 +94,13 @@ def find_tick_entry(
 # ── SL tick ───────────────────────────────────────────────────────────────────
 
 def find_tick_sl(
-    signal:      Any,
-    tick_df:     pd.DataFrame,
-    m1_df:       pd.DataFrame,
-    lookback_m1: int   = 3,
-    percentile:  float = 5.0,
-    buffer_usd:  float = 0.10,
+    signal:       Any,
+    tick_df:      pd.DataFrame,
+    m1_df:        pd.DataFrame,
+    lookback_m1:  int   = 3,
+    percentile:   float = 5.0,
+    buffer_usd:   float = 0.10,
+    max_tighten:  float = 0.0,   # plafond de resserrement en USD (0 = illimité)
 ) -> float:
     """
     Calcule un SL affiné à partir des ticks bid/ask autour de la Spring bar.
@@ -108,6 +109,7 @@ def find_tick_sl(
       - prend le percentile `percentile` des prix bid dans la fenêtre Spring
       - soustrait buffer_usd  →  SL potentiel
       - retourne le MAX entre tick_sl et signal.stop_loss (le plus serré)
+      - si max_tighten > 0, annule le resserrement quand il dépasse ce seuil
 
     Pour les shorts : logique symétrique (percentile élevé, ask).
 
@@ -139,11 +141,19 @@ def find_tick_sl(
     if signal.direction == "long":
         tick_extreme = float(prices.quantile(percentile / 100.0))
         tick_sl      = tick_extreme - buffer_usd
-        return max(tick_sl, signal.stop_loss)   # plus serré = plus haut pour un long
+        candidate    = max(tick_sl, signal.stop_loss)
+        tightening   = candidate - signal.stop_loss
+        if max_tighten > 0.0 and tightening > max_tighten:
+            return signal.stop_loss   # resserrement trop fort → SL M1 conservé
+        return candidate
     else:
         tick_extreme = float(prices.quantile(1.0 - percentile / 100.0))
         tick_sl      = tick_extreme + buffer_usd
-        return min(tick_sl, signal.stop_loss)   # plus serré = plus bas pour un short
+        candidate    = min(tick_sl, signal.stop_loss)
+        tightening   = signal.stop_loss - candidate
+        if max_tighten > 0.0 and tightening > max_tighten:
+            return signal.stop_loss
+        return candidate
 
 
 # ── pipeline complet ──────────────────────────────────────────────────────────
@@ -157,6 +167,7 @@ def optimize_signals_with_ticks(
     sl_percentile:    float = 5.0,
     sl_buffer_usd:    float = 0.10,
     sl_lookback_m1:   int   = 3,
+    sl_max_tighten:   float = 0.0,   # plafond de resserrement SL (0 = illimité)
     max_entry_wait_s: int   = 300,
 ) -> list[Any]:
     """
@@ -186,18 +197,14 @@ def optimize_signals_with_ticks(
             result = find_tick_entry(sig, tick_df, max_wait_seconds=max_entry_wait_s)
             if result is not None:
                 tick_fill, _ = result
-                # Pour un long, un fill plus bas = meilleur
-                # Pour un short, un fill plus haut = meilleur
-                if sig.direction == "long" and tick_fill < sig.entry_price:
-                    delta = sig.entry_price - tick_fill
-                    entry_deltas.append(delta)
-                    new_entry = tick_fill
-                    n_entry_improved += 1
-                elif sig.direction == "short" and tick_fill > sig.entry_price:
-                    delta = tick_fill - sig.entry_price
-                    entry_deltas.append(delta)
-                    new_entry = tick_fill
-                    n_entry_improved += 1
+                # Toujours utiliser le fill tick réel (ask pour long, bid pour short).
+                # tick_fill >= entry_price pour un long (premier ask qui franchit le niveau).
+                # Cela corrige le bug où new_entry restait à entry_price (bid/mid)
+                # au lieu du vrai ask, provoquant un fill sans spread appliqué.
+                delta = tick_fill - sig.entry_price  # >0 = slippage, ~0 = fill au niveau
+                entry_deltas.append(delta)
+                new_entry = tick_fill
+                n_entry_improved += 1
 
         # ── 2. SL tick ────────────────────────────────────────────────────────
         if refine_sl:
@@ -206,6 +213,7 @@ def optimize_signals_with_ticks(
                 lookback_m1 = sl_lookback_m1,
                 percentile  = sl_percentile,
                 buffer_usd  = sl_buffer_usd,
+                max_tighten = sl_max_tighten,
             )
             if sig.direction == "long" and tick_sl_price > sig.stop_loss:
                 delta = tick_sl_price - sig.stop_loss
@@ -255,9 +263,9 @@ def _print_summary(
 
     print(
         f"\n  ── Tick Optimizer — {n} signaux ──────────────────────────────\n"
-        f"  Entrées améliorées : {n_entry:>3} / {n}  ({pct_e:5.1f}%)  "
-        f"  gain moy = {avg_e:+.3f} USD/oz\n"
+        f"  Fills tick trouvés : {n_entry:>3} / {n}  ({pct_e:5.1f}%)  "
+        f"  glissement moy = {avg_e:+.3f} USD/oz\n"
         f"  SL affinés        : {n_sl:>3} / {n}  ({pct_s:5.1f}%)  "
-        f"  gain moy = {avg_s:+.3f} USD/oz\n"
+        f"  tightening moy = {avg_s:+.3f} USD/oz\n"
         f"  ─────────────────────────────────────────────────────────────"
     )

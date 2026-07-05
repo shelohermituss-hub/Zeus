@@ -99,13 +99,17 @@ _4T_BEST = dict(
 )
 RUNNER_RR = 20.0
 
+MIN_SL_USD      = 0.0   # désactivé pour le backtest — activable (ex: 2.0) pour le live trading
+MAX_TIGHTEN_USD = 2.0   # plafond de resserrement tick SL (évite de mettre le SL dans la zone de bruit)
+
 # Optimiseur ticks
 _OPT = dict(
     refine_entry     = True,
     refine_sl        = True,
-    sl_percentile    = 5.0,
+    sl_percentile    = 15.0,           # was 5.0 — moins agressif
     sl_buffer_usd    = 0.10,
-    sl_lookback_m1   = 3,
+    sl_lookback_m1   = 0,              # was 3 — Spring bar seulement
+    sl_max_tighten   = MAX_TIGHTEN_USD,
     max_entry_wait_s = 300,
 )
 
@@ -214,8 +218,9 @@ def _run_period(
             **{k: v for k, v in _OPT.items() if k not in ("refine_entry", "refine_sl")},
         )
         # OHLCV 1s pour scan SL/TP (meilleure résolution)
-        sim_tick_df = resample_ticks(tick_df, TICK_RESAMPLE_FREQ)
-        spread      = SPREAD_TICK   # spread déjà dans le prix tick
+        # price_col="bid" : les SL de longs se vérifient sur le bid (prix de vente)
+        sim_tick_df = resample_ticks(tick_df, TICK_RESAMPLE_FREQ, price_col="bid")
+        spread      = SPREAD_TICK   # spread déjà dans le prix tick ask (fill tick)
 
     use_signal_entry = (mode != "m1" and tick_df is not None)
 
@@ -225,6 +230,7 @@ def _run_period(
         spread           = spread,
         use_signal_entry = use_signal_entry,
         tick_df          = sim_tick_df,
+        min_sl_usd       = MIN_SL_USD,
         **_4T_BEST,
     )
     m = compute_metrics(results, INITIAL_BALANCE, len(signals), n_exp)
