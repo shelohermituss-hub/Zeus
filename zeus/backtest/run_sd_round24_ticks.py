@@ -159,13 +159,13 @@ def _load_ticks_for_year(year: int) -> pd.DataFrame | None:
     for c in candidates:
         if c.is_file():
             try:
-                return parse_mt5_ticks(c)
+                return parse_mt5_ticks(c, synthetic_spread=SPREAD)
             except Exception as e:
                 print(f"  ⚠ Erreur lecture ticks {c}: {e}")
                 return None
         if c.is_dir():
             try:
-                return load_tick_directory(c)
+                return load_tick_directory(c, synthetic_spread=SPREAD)
             except Exception as e:
                 print(f"  ⚠ Erreur lecture ticks {c}: {e}")
                 return None
