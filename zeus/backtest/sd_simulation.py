@@ -86,6 +86,7 @@ def simulate_trade(
     tp3_cumulative_pct:  float = 0.85,  # cumulative fraction closed by TP3
     momentum_tp2:        bool  = False,  # adjust TP2 close size dynamically by bar strength
     momentum_strong_pct: float = 0.40,  # tp2 cumulative pct when bar confirms momentum
+    use_signal_entry:    bool  = False,  # use signal.entry_price as fill (tick-optimized)
     slippage_ticks:      float = 0.0,
     tick_df:             pd.DataFrame | None = None,
     quote_to_usd_rate:   float = 1.0,
@@ -111,6 +112,12 @@ def simulate_trade(
            If the bar closes in the upper 60 % of its range (for longs),
            tp2_cumulative_pct is overridden to momentum_strong_pct (smaller close,
            more position left to run). Otherwise the default tp2_cumulative_pct applies.
+
+    use_signal_entry: when True, signal.entry_price is used directly as the fill
+           price (no M1 bar open lookup, no spread addition). This enables tick-
+           optimized signals produced by tick_optimizer.optimize_signals_with_ticks().
+           The spread parameter should be set to 0.0 when using this mode since the
+           bid/ask cost is already embedded in the tick fill price.
 
     use_be: if True (and tp1_r == 0), move SL to break-even once +1R is reached.
             Ignored when tp1_r > 0 (partial TP takes over the BE role).
@@ -142,12 +149,17 @@ def simulate_trade(
     else:
         entry_bar = entry_bar_df
 
-    raw_open = float(scan_df.iloc[entry_bar]["open"])
-    is_long  = signal.direction == "long"
+    is_long = signal.direction == "long"
 
-    # F-09: slippage applied on top of spread
-    total_cost      = spread + slippage_ticks
-    effective_entry = raw_open + total_cost if is_long else raw_open - total_cost
+    if use_signal_entry:
+        # Tick-optimized fill: signal.entry_price was set by tick_optimizer.
+        # No spread or slippage added here; the bid/ask cost is in the tick price.
+        effective_entry = signal.entry_price
+    else:
+        raw_open = float(scan_df.iloc[entry_bar]["open"])
+        # F-09: slippage applied on top of spread
+        total_cost      = spread + slippage_ticks
+        effective_entry = raw_open + total_cost if is_long else raw_open - total_cost
 
     sl = signal.stop_loss
     sl_dist = abs(effective_entry - sl)
@@ -325,6 +337,7 @@ def simulate_all(
     tp3_cumulative_pct:  float = 0.85,
     momentum_tp2:        bool  = False,
     momentum_strong_pct: float = 0.40,
+    use_signal_entry:    bool  = False,
     initial_equity:      float = 10_000.0,
     slippage_ticks:      float = 0.0,
     tick_df:             pd.DataFrame | None = None,
@@ -366,6 +379,7 @@ def simulate_all(
             tp2_r=tp2_r, tp2_cumulative_pct=tp2_cumulative_pct,
             tp3_r=tp3_r, tp3_cumulative_pct=tp3_cumulative_pct,
             momentum_tp2=momentum_tp2, momentum_strong_pct=momentum_strong_pct,
+            use_signal_entry=use_signal_entry,
             slippage_ticks=slippage_ticks, tick_df=tick_df,
             quote_to_usd_rate=quote_to_usd_rate,
             use_trailing_stop=use_trailing_stop, trailing_factor=trailing_factor,
