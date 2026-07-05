@@ -251,7 +251,7 @@ def main() -> None:
     ranked = sorted(summary, key=lambda x: x[1]["tr"], reverse=True)
     for name, t in ranked:
         delta = f"{t['tr'] - base_r:>+7.2f}" if abs(t['tr'] - base_r) > 0.001 else "   ref"
-        ok    = " ← MEILLEUR" if t["tr"] == max(x[1]["tr"] for _, x in summary) else ""
+        ok    = " ← MEILLEUR" if t["tr"] == max(x["tr"] for _, x in summary) else ""
         print(
             f"  {name:<42}  {t['tw']:>3} {t['tl']:>3}  "
             f"{t['wr']:>5.1f}%  {t['tr']:>+7.2f}  {t['max_dd']:>5.1f}%  {delta}{ok}"
