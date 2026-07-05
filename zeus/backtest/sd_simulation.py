@@ -94,6 +94,9 @@ def simulate_trade(
     trailing_factor:     float = 0.5,
     min_sl_usd:          float = 0.0,   # skip signals with sl_dist < this threshold
     fixed_sl_usd:        float = 0.0,   # override SL with fixed distance (0 = Wyckoff SL)
+    h4_atr:              "pd.Series | None" = None,  # H4 ATR(14) series for post-TP2 trailing
+    use_tp2_trailing:    bool  = False,  # ATR-based trailing stop after TP2 (replaces TP3+runner)
+    tp2_trailing_factor: float = 1.5,   # trail = peak - factor × ATR(H4)
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
@@ -201,10 +204,23 @@ def simulate_trade(
     actual_tp2_pct = tp2_cumulative_pct  # may be overridden by momentum check
 
     # Partial TP3 state (4-tier exit: TP1 → TP2 → TP3 → runner)
-    use_tp3 = (tp3_r > 0.0 and use_tp2 and tp3_r > tp2_r and tp3_r < signal.risk_reward)
+    # Disabled when use_tp2_trailing is active (trail replaces TP3 + runner)
+    use_tp3 = (tp3_r > 0.0 and use_tp2 and tp3_r > tp2_r and tp3_r < signal.risk_reward
+               and not use_tp2_trailing)
     tp3     = ((effective_entry + tp3_r * sl_dist) if is_long
                else (effective_entry - tp3_r * sl_dist)) if use_tp3 else 0.0
     tp3_hit = False
+
+    # ATR trailing state (activates after TP2 when use_tp2_trailing=True)
+    trail_active    = False
+    trail_stop_val  = 0.0
+
+    def _lookup_atr(ts: pd.Timestamp) -> float:
+        """Forward-fill lookup of H4 ATR at timestamp ts."""
+        if h4_atr is None or h4_atr.empty:
+            return sl_dist  # fallback: 1R trail
+        idx = int(h4_atr.index.searchsorted(ts, side="right")) - 1
+        return float(h4_atr.iloc[max(0, idx)])
 
     def _exit(bar_idx: int, exit_px: float, outcome: str, pnl_r: float) -> TradeResult:
         raw_pnl = size_oz * sl_dist * pnl_r
@@ -244,6 +260,20 @@ def simulate_trade(
             else:
                 peak_price = min(peak_price, lo)
                 active_sl  = min(active_sl, peak_price + trailing_factor * sl_dist)
+
+        # ── ATR trailing after TP2 (raises active_sl, replaces TP3 + runner) ──
+        if trail_active:
+            cur_atr = _lookup_atr(scan_df.index[bar_idx])
+            if is_long:
+                new_trail  = hi - tp2_trailing_factor * cur_atr
+                trail_stop_val = max(trail_stop_val, new_trail)
+                trail_stop_val = max(trail_stop_val, tp2)   # floor at TP2
+                active_sl  = max(active_sl, trail_stop_val)
+            else:
+                new_trail  = lo + tp2_trailing_factor * cur_atr
+                trail_stop_val = min(trail_stop_val, new_trail)
+                trail_stop_val = min(trail_stop_val, tp2)   # ceiling at TP2
+                active_sl  = min(active_sl, trail_stop_val)
 
         # ── SL check (pessimistic: always evaluated first) ────────────────────
         sl_hit = (lo <= active_sl) if is_long else (hi >= active_sl)
@@ -292,6 +322,9 @@ def simulate_trade(
             if (hi >= tp2 if is_long else lo <= tp2):
                 tp2_hit   = True
                 active_sl = tp1   # SL → TP1 level (= BE when tp1_size=0)
+                if use_tp2_trailing and h4_atr is not None:
+                    trail_active   = True
+                    trail_stop_val = tp2   # trail floor starts at TP2 level
                 if momentum_tp2:
                     bar_range = hi - lo
                     if bar_range > 1e-6:
@@ -306,7 +339,8 @@ def simulate_trade(
                 active_sl = tp2   # SL → TP2 level (runner locks in TP2 gains)
 
         # ── Full TP check (runner reaches signal.risk_reward target) ─────────
-        tp_hit = (hi >= tp) if is_long else (lo <= tp)
+        # Skipped when ATR trailing is active (trail handles all exits after TP2)
+        tp_hit = (not trail_active) and ((hi >= tp) if is_long else (lo <= tp))
         if tp_hit:
             if use_tp3 and tp3_hit:
                 tp3_portion = tp3_cumulative_pct - actual_tp2_pct
@@ -354,6 +388,9 @@ def simulate_all(
     trailing_factor:     float = 0.5,
     min_sl_usd:          float = 0.0,
     fixed_sl_usd:        float = 0.0,   # override SL with fixed distance (0 = Wyckoff SL)
+    h4_atr:              "pd.Series | None" = None,
+    use_tp2_trailing:    bool  = False,
+    tp2_trailing_factor: float = 1.5,
 ) -> tuple[list[TradeResult], int]:
     """
     Simulate all signals sequentially with compounding equity.
@@ -394,6 +431,8 @@ def simulate_all(
             quote_to_usd_rate=quote_to_usd_rate,
             use_trailing_stop=use_trailing_stop, trailing_factor=trailing_factor,
             min_sl_usd=min_sl_usd, fixed_sl_usd=fixed_sl_usd,
+            h4_atr=h4_atr, use_tp2_trailing=use_tp2_trailing,
+            tp2_trailing_factor=tp2_trailing_factor,
         )
         if result is None:
             n_expired += 1
