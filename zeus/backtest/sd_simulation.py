@@ -93,6 +93,7 @@ def simulate_trade(
     use_trailing_stop:   bool  = False,
     trailing_factor:     float = 0.5,
     min_sl_usd:          float = 0.0,   # skip signals with sl_dist < this threshold
+    fixed_sl_usd:        float = 0.0,   # override SL with fixed distance (0 = Wyckoff SL)
 ) -> TradeResult | None:
     """
     Simulate one trade on m1_df starting the bar after signal.bar_index.
@@ -162,12 +163,16 @@ def simulate_trade(
         total_cost      = spread + slippage_ticks
         effective_entry = raw_open + total_cost if is_long else raw_open - total_cost
 
-    sl = signal.stop_loss
-    sl_dist = abs(effective_entry - sl)
-    if sl_dist < 1e-6:
-        return None
-    if min_sl_usd > 0.0 and sl_dist < min_sl_usd:
-        return None
+    if fixed_sl_usd > 0.0:
+        sl_dist = fixed_sl_usd
+        sl = effective_entry - sl_dist if is_long else effective_entry + sl_dist
+    else:
+        sl = signal.stop_loss
+        sl_dist = abs(effective_entry - sl)
+        if sl_dist < 1e-6:
+            return None
+        if min_sl_usd > 0.0 and sl_dist < min_sl_usd:
+            return None
 
     tp = (effective_entry + signal.risk_reward * sl_dist if is_long
           else effective_entry - signal.risk_reward * sl_dist)
@@ -348,6 +353,7 @@ def simulate_all(
     use_trailing_stop:   bool  = False,
     trailing_factor:     float = 0.5,
     min_sl_usd:          float = 0.0,
+    fixed_sl_usd:        float = 0.0,   # override SL with fixed distance (0 = Wyckoff SL)
 ) -> tuple[list[TradeResult], int]:
     """
     Simulate all signals sequentially with compounding equity.
@@ -387,7 +393,7 @@ def simulate_all(
             slippage_ticks=slippage_ticks, tick_df=tick_df,
             quote_to_usd_rate=quote_to_usd_rate,
             use_trailing_stop=use_trailing_stop, trailing_factor=trailing_factor,
-            min_sl_usd=min_sl_usd,
+            min_sl_usd=min_sl_usd, fixed_sl_usd=fixed_sl_usd,
         )
         if result is None:
             n_expired += 1

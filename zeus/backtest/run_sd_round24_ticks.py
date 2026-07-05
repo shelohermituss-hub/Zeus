@@ -101,6 +101,7 @@ RUNNER_RR = 20.0
 
 MIN_SL_USD      = 0.0   # désactivé pour le backtest — activable (ex: 2.0) pour le live trading
 MAX_TIGHTEN_USD = 2.0   # plafond de resserrement tick SL (évite de mettre le SL dans la zone de bruit)
+FIXED_SL_USD    = 20.0  # variante SL fixe : 20 USD/oz (≈ 20 pips XAUUSD, 0 = SL Wyckoff natif)
 
 # Optimiseur ticks
 _OPT = dict(
@@ -189,9 +190,10 @@ def _build_strategy() -> SDStrategy:
 
 
 def _run_period(
-    m1_df:    pd.DataFrame,
-    tick_df:  pd.DataFrame | None,
-    mode:     str,
+    m1_df:       pd.DataFrame,
+    tick_df:     pd.DataFrame | None,
+    mode:        str,
+    fixed_sl_usd: float = 0.0,
 ) -> tuple[dict, int]:
     """
     Lance un backtest sur une période.
@@ -231,6 +233,7 @@ def _run_period(
         use_signal_entry = use_signal_entry,
         tick_df          = sim_tick_df,
         min_sl_usd       = MIN_SL_USD,
+        fixed_sl_usd     = fixed_sl_usd,
         **_4T_BEST,
     )
     m = compute_metrics(results, INITIAL_BALANCE, len(signals), n_exp)
@@ -278,12 +281,14 @@ def _print_table(title: str, rows: list[tuple[str, dict, int]]) -> tuple[float, 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main() -> None:
-    print("=" * 100)
-    print("  S&D Round 24 — XAUUSD · Comparaison M1 vs Ticks")
-    print("  Champion : 4T · TP1@1R(BE) · TP2@3R(60%) · TP3@8R(85%) · Runner@20R")
-    print("=" * 100)
-
+def _run_block(
+    label:       str,
+    fixed_sl:    float,
+) -> list[tuple[str, float, float, float, float]]:
+    """
+    Execute all 3 modes (M1 / Tick Entry / Tick+SL) for a given fixed_sl_usd value.
+    Returns summary rows for the final comparison table.
+    """
     MODES = [
         ("m1",         "Mode A — Référence M1         "),
         ("tick_entry", "Mode B — Tick Entry (SL M1)   "),
@@ -299,21 +304,28 @@ def main() -> None:
 
         rows = []
         for period_label, m1_files, year in PERIODS:
-            m1_df    = _load_m1(m1_files)
-            tick_df  = _load_ticks_for_year(year) if mode != "m1" else None
+            m1_df   = _load_m1(m1_files)
+            tick_df = _load_ticks_for_year(year) if mode != "m1" else None
 
             if mode != "m1" and tick_df is None:
                 print(f"  ⚠ Ticks manquants pour {year} — fallback M1 pour cette période")
 
-            m, n_sig = _run_period(m1_df, tick_df, mode if tick_df is not None else "m1")
+            eff_mode = mode if tick_df is not None else "m1"
+            m, n_sig = _run_period(m1_df, tick_df, eff_mode, fixed_sl_usd=fixed_sl)
             rows.append((period_label, m, n_sig))
 
         tr, mr, wr, dd = _print_table(mode_label, rows)
         summary.append((mode_label, tr, mr, wr, dd))
 
-    # ── Comparaison finale ────────────────────────────────────────────────────
+    return summary
+
+
+def _print_comparison(
+    summary:  list[tuple[str, float, float, float, float]],
+    title:    str,
+) -> None:
     print(f"\n{'=' * 100}")
-    print("  COMPARAISON FINALE — Impact des données tick")
+    print(f"  {title}")
     print(f"{'─' * 100}")
     print(f"\n  {'Mode':<38}  {'TotR':>7}  {'MinR':>7}  {'WR':>5}  {'MaxDD':>6}  {'vs M1':>8}")
     print("  " + "─" * 75)
@@ -323,6 +335,39 @@ def main() -> None:
         delta = f"{tr - base_r:>+7.2f}" if tr != base_r else "   ref"
         ok    = "←" if mr > 0 and wr >= 60 else ""
         print(f"  {name:<38}  {tr:>+7.2f}  {mr:>+7.2f}  {wr:>5.1f}%  {dd:>5.1f}%  {delta}  {ok}")
+
+
+def main() -> None:
+    print("=" * 100)
+    print("  S&D Round 24 — XAUUSD · SL Wyckoff natif  vs  SL fixe 20 USD/oz")
+    print("  Champion : 4T · TP1@1R(BE) · TP2@3R(60%) · TP3@8R(85%) · Runner@20R")
+    print("=" * 100)
+
+    # ── BLOC 1 : SL Wyckoff natif ─────────────────────────────────────────────
+    print(f"\n{'#' * 100}")
+    print(f"  BLOC 1 — SL Wyckoff natif (signal.stop_loss)")
+    print(f"{'#' * 100}")
+    summary_wyckoff = _run_block("Wyckoff SL", fixed_sl=0.0)
+    _print_comparison(summary_wyckoff, "COMPARAISON — SL Wyckoff natif")
+
+    # ── BLOC 2 : SL fixe 20 USD/oz ───────────────────────────────────────────
+    print(f"\n{'#' * 100}")
+    print(f"  BLOC 2 — SL fixe {FIXED_SL_USD:.0f} USD/oz (≈ {FIXED_SL_USD:.0f} pips XAUUSD)")
+    print(f"{'#' * 100}")
+    summary_fixed = _run_block(f"SL fixe {FIXED_SL_USD:.0f}", fixed_sl=FIXED_SL_USD)
+    _print_comparison(summary_fixed, f"COMPARAISON — SL fixe {FIXED_SL_USD:.0f} USD/oz")
+
+    # ── RÉSUMÉ GLOBAL ─────────────────────────────────────────────────────────
+    print(f"\n{'=' * 100}")
+    print("  RÉSUMÉ GLOBAL — Wyckoff SL vs SL fixe")
+    print(f"{'─' * 100}")
+    print(f"\n  {'Variant / Mode':<42}  {'TotR':>7}  {'WR':>5}  {'MaxDD':>6}")
+    print("  " + "─" * 65)
+    for (name, tr, mr, wr, dd), tag in zip(
+        summary_wyckoff + summary_fixed,
+        ["[Wy]"] * 3 + [f"[F{FIXED_SL_USD:.0f}]"] * 3,
+    ):
+        print(f"  {tag} {name:<38}  {tr:>+7.2f}  {wr:>5.1f}%  {dd:>5.1f}%")
 
     print(f"\n{'=' * 100}")
     print("  Fin")
