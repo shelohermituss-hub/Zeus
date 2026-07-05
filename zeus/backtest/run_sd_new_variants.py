@@ -31,12 +31,11 @@ _M1   = _ROOT / "data" / "historical" / "xauusd" / "m1"
 
 # ── Paramètres fixes ──────────────────────────────────────────────────────────
 
-INITIAL_BALANCE      = 10_000.0
-RISK_PCT             = 0.01
-SPREAD               = 0.30
-RUNNER_RR            = 20.0
-TP2_TRAILING_FACTOR  = 1.5      # trailing = peak - 1.5 × ATR(H4)
-ATR_PERIOD           = 14       # H4 ATR lookback
+INITIAL_BALANCE  = 10_000.0
+RISK_PCT         = 0.01
+SPREAD           = 0.30
+RUNNER_RR        = 20.0
+ATR_PERIOD       = 14       # ATR lookback for both H4 and M30
 
 _WY = dict(
     lookback             = 200,
@@ -80,20 +79,34 @@ _BASE = dict(
 
 VARIANTS: dict[str, dict] = {
     "V0 — Baseline (WS≥5.9 · long-only · TP3+Runner)": dict(
-        strat = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=99.0),
-        sim   = dict(use_tp2_trailing=False),
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=99.0),
+        sim     = dict(use_tp2_trailing=False, tp2_trailing_factor=1.5),
+        atr_src = "h4",
     ),
     "V4 — Short sélectif (WS_short≥8.5 · trend filtre)": dict(
-        strat = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5),
-        sim   = dict(use_tp2_trailing=False),
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5),
+        sim     = dict(use_tp2_trailing=False, tp2_trailing_factor=1.5),
+        atr_src = "h4",
     ),
-    "V5 — Trail ATR×1.5 après TP2 (long-only)": dict(
-        strat = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=99.0),
-        sim   = dict(use_tp2_trailing=True),
+    "V5 — Trail H4×1.5 (long-only)": dict(
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=99.0),
+        sim     = dict(use_tp2_trailing=True,  tp2_trailing_factor=1.5),
+        atr_src = "h4",
     ),
-    "V6 — Trail ATR + Short≥8.5": dict(
-        strat = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5),
-        sim   = dict(use_tp2_trailing=True),
+    "V6 — Trail H4×1.5 + Short≥8.5": dict(
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5),
+        sim     = dict(use_tp2_trailing=True,  tp2_trailing_factor=1.5),
+        atr_src = "h4",
+    ),
+    "V7 — Trail H4×0.5 serré + Short≥8.5": dict(
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5),
+        sim     = dict(use_tp2_trailing=True,  tp2_trailing_factor=0.5),
+        atr_src = "h4",
+    ),
+    "V8 — Trail M30×1.5 serré + Short≥8.5": dict(
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5),
+        sim     = dict(use_tp2_trailing=True,  tp2_trailing_factor=1.5),
+        atr_src = "m30",
     ),
 }
 
@@ -124,17 +137,22 @@ def _load_m1(files: list[Path]) -> pd.DataFrame:
     return df[~df.index.duplicated(keep="first")]
 
 
-def _compute_h4_atr(m1_df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
-    """Compute ATR(period) on H4 OHLCV derived from M1."""
-    h4 = resample_ohlcv(m1_df, "4h")
-    prev_close = h4["close"].shift(1)
+def _atr_from_ohlcv(ohlcv: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
+    prev_close = ohlcv["close"].shift(1)
     tr = pd.concat([
-        h4["high"] - h4["low"],
-        (h4["high"] - prev_close).abs(),
-        (h4["low"]  - prev_close).abs(),
+        ohlcv["high"] - ohlcv["low"],
+        (ohlcv["high"] - prev_close).abs(),
+        (ohlcv["low"]  - prev_close).abs(),
     ], axis=1).max(axis=1)
-    atr = tr.ewm(span=period, adjust=False).mean()   # Wilder EMA (standard)
-    return atr.dropna()
+    return tr.ewm(span=period, adjust=False).mean().dropna()
+
+
+def _compute_h4_atr(m1_df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
+    return _atr_from_ohlcv(resample_ohlcv(m1_df, "4h"), period)
+
+
+def _compute_m30_atr(m1_df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
+    return _atr_from_ohlcv(resample_ohlcv(m1_df, "30min"), period)
 
 
 def _build_strategy(strat_params: dict) -> SDStrategy:
@@ -148,12 +166,19 @@ def _build_strategy(strat_params: dict) -> SDStrategy:
 
 
 def _run(
-    m1_df:      pd.DataFrame,
+    m1_df:       pd.DataFrame,
     strat_params: dict,
-    sim_extra:  dict,
-    h4_atr:     pd.Series,
+    sim_extra:   dict,
+    h4_atr:      pd.Series,
+    m30_atr:     pd.Series,
+    atr_src:     str,
 ) -> tuple[dict, int, int, int]:
     """Returns (metrics, n_signals, n_long, n_short)."""
+    atr_series = h4_atr if atr_src == "h4" else m30_atr
+    # Extract tp2_trailing_factor from sim_extra so it doesn't conflict
+    sim_kwargs = dict(sim_extra)
+    trail_factor = sim_kwargs.pop("tp2_trailing_factor", 1.5)
+
     zone_df  = resample_ohlcv(m1_df, "15min")
     strategy = _build_strategy(strat_params)
     signals  = strategy.run(zone_df, m1_df)
@@ -166,9 +191,9 @@ def _run(
         signals, m1_df,
         risk_pct            = RISK_PCT,
         spread              = SPREAD,
-        h4_atr              = h4_atr,
-        tp2_trailing_factor = TP2_TRAILING_FACTOR,
-        **sim_extra,
+        h4_atr              = atr_series,
+        tp2_trailing_factor = trail_factor,
+        **sim_kwargs,
         **_4T_BEST,
     )
     m = compute_metrics(results, INITIAL_BALANCE, n_sig, n_exp)
@@ -234,14 +259,15 @@ def main() -> None:
 
     # Pré-chargement
     print("\n  Chargement M1…")
-    period_data: list[tuple[str, pd.DataFrame, pd.Series]] = []
+    period_data: list[tuple[str, pd.DataFrame, pd.Series, pd.Series]] = []
     for period_label, files in PERIODS:
         try:
-            m1 = _load_m1(files)
-            atr = _compute_h4_atr(m1)
-            period_data.append((period_label, m1, atr))
-            atr_mean = atr.mean()
-            print(f"    ✓  {period_label:<24}  {len(m1):>8,} barres M1  |  ATR(H4) moy = {atr_mean:.2f} USD/oz")
+            m1      = _load_m1(files)
+            h4_atr  = _compute_h4_atr(m1)
+            m30_atr = _compute_m30_atr(m1)
+            period_data.append((period_label, m1, h4_atr, m30_atr))
+            print(f"    ✓  {period_label:<24}  {len(m1):>8,} barres M1  "
+                  f"|  ATR(H4)={h4_atr.mean():.2f}  ATR(M30)={m30_atr.mean():.2f} USD/oz")
         except FileNotFoundError as e:
             print(f"    ✗  {period_label}  MANQUANT — {e}")
 
@@ -252,12 +278,14 @@ def main() -> None:
 
     for variant_name, vcfg in VARIANTS.items():
         rows = []
-        for period_label, m1_df, h4_atr in period_data:
+        for period_label, m1_df, h4_atr, m30_atr in period_data:
             m, n_sig, n_long, n_short = _run(
                 m1_df,
                 strat_params = vcfg["strat"],
                 sim_extra    = vcfg["sim"],
                 h4_atr       = h4_atr,
+                m30_atr      = m30_atr,
+                atr_src      = vcfg["atr_src"],
             )
             rows.append((period_label, m, n_sig, n_long, n_short))
         totals = _print_block(variant_name, rows)

@@ -1,27 +1,26 @@
 """
-Paper trading engine for the Supply & Demand strategy — V_FINAL_B champion.
+Paper trading engine for the Supply & Demand strategy — V4 bidirectional champion.
 
-Configuration (V_FINAL_B — validated OOS across 2024/2025/2026):
+Configuration (V4 — validated OOS across 2024/2025/2026):
     SDStrategy:
         risk_reward=1.5, min_zone_score=5.0, min_wyckoff_score=5.9 (long),
-        min_wyckoff_score_short=99.0 (long-only), trend_slope_lookback=3,
-        use_price_above_ema=True, session 07–21h UTC, signal_cooldown=10
+        min_wyckoff_score_short=8.5 (bidirectional), trend_slope_lookback=3,
+        trend_slope_lookback_short=20, use_price_above_ema=True,
+        use_price_above_ema_for_shorts=False, session 07–21h UTC, signal_cooldown=10
 
     Execution:
         TP1 at 1.25R (50% partial exit), TP2 at 1.5R (remaining 50%)
         SL → break-even after TP1 hit
         Max 1 loss per calendar day (no more entries after first loss)
         Max 4 losses per calendar month
-
-    Backtest validation (combined across 4 periods):
-        71.1% WR · +52.62R · max DD 2.5% · R > 0 in every period
+        Long: entry at ask (open + SPREAD), Short: entry at bid (open − SPREAD)
 
 Loop design:
     - Fetches M1 OHLCV from the market connector every `poll_interval` seconds.
     - Resamples M1 → M15 in-process (no separate M15 fetch needed).
     - Executes signal detection on the last COMPLETE M1 bar (penultimate row).
     - Enters at the open of the bar following the MSS bar (best-effort paper fill).
-    - Tracks one open trade at a time (long only, no pyramiding).
+    - Tracks one open trade at a time (long or short, no pyramiding).
     - Applies spread on both entry and stop exit.
     - Implements partial TP1 exit and SL-to-BE management.
 """
@@ -43,24 +42,26 @@ from zeus.strategy.supply_demand.wyckoff import WyckoffDetector
 from zeus.strategy.supply_demand.zone_detector import ZoneDetector
 from zeus.utils.logger import logger
 
-# ── V_FINAL_B champion params ─────────────────────────────────────────────────
+# ── V4 bidirectional champion params ──────────────────────────────────────────
 _STRATEGY_PARAMS = dict(
-    risk_reward             = 1.5,
-    min_zone_score          = 5.0,
-    min_wyckoff_score       = 5.9,
-    min_composite_score     = 5.0,
-    min_wyckoff_score_short = 99.0,   # long-only (demand zones only)
-    signal_cooldown         = 10,
-    use_trend_filter        = True,
-    trend_slope_lookback    = 3,
-    use_price_above_ema     = True,
-    use_session_filter      = True,
-    session_start_utc       = 7,
-    session_end_utc         = 21,
-    max_signals_per_day     = 6,
-    use_adx_filter          = False,
-    use_h4_trend_filter     = False,
-    use_rsi_filter          = False,
+    risk_reward                   = 1.5,
+    min_zone_score                = 5.0,
+    min_wyckoff_score             = 5.9,
+    min_composite_score           = 5.0,
+    min_wyckoff_score_short       = 8.5,    # bidirectional: supply zones enabled
+    signal_cooldown               = 10,
+    use_trend_filter              = True,
+    trend_slope_lookback          = 3,
+    trend_slope_lookback_short    = 20,     # longer lookback: captures macro downtrend
+    use_price_above_ema           = True,
+    use_price_above_ema_for_shorts = False,  # supply zones sit above EMA50 — no price filter
+    use_session_filter            = True,
+    session_start_utc             = 7,
+    session_end_utc               = 21,
+    max_signals_per_day           = 6,
+    use_adx_filter                = False,
+    use_h4_trend_filter           = False,
+    use_rsi_filter                = False,
 )
 
 _WYCKOFF_PARAMS = dict(
@@ -183,7 +184,7 @@ class SDPaperEngine:
             "SD paper trading started",
             symbol=self._symbol,
             equity=self._equity,
-            config="V_FINAL_B: long-only, TP1@1.25R(50%)→TP2@1.5R, daily_loss_cap=1",
+            config="V4: bidir WS_short≥8.5, TP1@1.25R(50%)→TP2@1.5R, daily_loss_cap=1",
         )
         try:
             while self._running:
@@ -272,22 +273,24 @@ class SDPaperEngine:
     # ── Trade management ──────────────────────────────────────────────────────
 
     def _enter_trade(self, signal: SDSignal, m1_df: pd.DataFrame) -> None:
-        """Open a new paper long trade at the next bar's open (current bar open)."""
-        # Entry bar is the bar after the MSS bar; use current bar open
+        """Open a new paper trade (long or short) at the next bar's open."""
         entry_bar_idx = signal.bar_index + 1
         if entry_bar_idx >= len(m1_df):
             logger.debug("Signal bar too recent — entry skipped", formed_at=str(signal.formed_at))
             return
 
+        is_long     = signal.direction == "long"
         raw_open    = float(m1_df.iloc[entry_bar_idx]["open"])
-        entry_price = raw_open + SPREAD        # long: buy at ask
+        # Long: buy at ask (raw + spread). Short: sell at bid (raw − spread).
+        entry_price = (raw_open + SPREAD) if is_long else (raw_open - SPREAD)
         sl          = signal.stop_loss
         sl_dist     = abs(entry_price - sl)
         if sl_dist < 1e-6:
             return
 
-        tp1 = entry_price + TP1_R  * sl_dist
-        tp2 = entry_price + 1.5    * sl_dist   # V_FINAL_B R:R = 1.5
+        sign = 1.0 if is_long else -1.0
+        tp1  = entry_price + sign * TP1_R * sl_dist
+        tp2  = entry_price + sign * 1.5   * sl_dist
 
         risk_amount = self._equity * self._risk_pct
         size_oz     = risk_amount / sl_dist
@@ -306,20 +309,22 @@ class SDPaperEngine:
         )
         self._open_trade = trade
 
+        direction_tag   = "LONG"  if is_long else "SHORT"
+        direction_emoji = "📈" if is_long else "📉"
         logger.info(
-            "Trade OPENED",
-            symbol   = self._symbol,
-            entry    = round(entry_price, 2),
-            sl       = round(sl, 2),
-            tp1      = round(tp1, 2),
-            tp2      = round(tp2, 2),
-            size_oz  = round(size_oz, 4),
-            risk_usd = round(risk_amount, 2),
-            zone_score   = round(signal.zone_score, 2),
+            f"Trade OPENED ({direction_tag})",
+            symbol        = self._symbol,
+            entry         = round(entry_price, 2),
+            sl            = round(sl, 2),
+            tp1           = round(tp1, 2),
+            tp2           = round(tp2, 2),
+            size_oz       = round(size_oz, 4),
+            risk_usd      = round(risk_amount, 2),
+            zone_score    = round(signal.zone_score, 2),
             wyckoff_score = round(signal.wyckoff_score, 2),
         )
         self._notifier.send(
-            f"📈 LONG OPENED {self._symbol} @ {entry_price:.2f}\n"
+            f"{direction_emoji} {direction_tag} OPENED {self._symbol} @ {entry_price:.2f}\n"
             f"SL={sl:.2f}  TP1={tp1:.2f}  TP2={tp2:.2f}\n"
             f"Risk={risk_amount:.0f}$ | Zone={signal.zone_score:.1f} Wy={signal.wyckoff_score:.1f}"
         )
@@ -331,27 +336,29 @@ class SDPaperEngine:
         bar_lo    = float(last_bar["low"])
         bar_hi    = float(last_bar["high"])
 
+        is_long = trade.signal.direction == "long"
+
         # Pessimistic conflict: if both SL and TP touched in the same bar → SL wins
-        sl_hit = bar_lo <= trade.sl
-        tp1_hit = bar_hi >= trade.tp1
-        tp2_hit = bar_hi >= trade.tp2
+        sl_hit  = (bar_lo <= trade.sl)  if is_long else (bar_hi >= trade.sl)
+        tp1_hit = (bar_hi >= trade.tp1) if is_long else (bar_lo <= trade.tp1)
+        tp2_hit = (bar_hi >= trade.tp2) if is_long else (bar_lo <= trade.tp2)
 
         # ── SL hit ───────────────────────────────────────────────────────
         if sl_hit and not trade.tp1_hit:
-            # Full loss: price hit SL before TP1
-            sl_exit  = trade.sl - SPREAD  # pessimistic fill (slippage through SL)
-            loss_r   = (sl_exit - trade.entry_price) / trade.sl_dist  # < 0
-            pnl_usd  = trade.size_full * trade.sl_dist * loss_r - SPREAD * trade.size_full
+            # Full loss — pessimistic fill: long fills below SL, short fills above SL
+            sl_exit = (trade.sl - SPREAD) if is_long else (trade.sl + SPREAD)
+            loss_r  = ((sl_exit - trade.entry_price) / trade.sl_dist if is_long
+                       else (trade.entry_price - sl_exit) / trade.sl_dist)  # < 0
+            pnl_usd = trade.size_full * trade.sl_dist * loss_r - SPREAD * trade.size_full
             self._close_trade(trade, bar_ts, trade.sl, "loss", loss_r, pnl_usd)
             self._daily_losses   += 1
             self._monthly_losses += 1
             return
 
         if sl_hit and trade.tp1_hit:
-            # TP1 already hit; remaining position at BE (entry) → scratch outcome
-            scratch_r   = (trade.entry_price - trade.entry_price) / trade.sl_dist
-            tp1_portion = TP1_SIZE * TP1_R  # locked gain from TP1 partial
-            net_r       = tp1_portion + scratch_r
+            # TP1 already hit; remaining position stopped at BE → scratch outcome
+            tp1_portion = TP1_SIZE * TP1_R
+            net_r       = tp1_portion  # remaining portion closed at 0R (BE)
             pnl_usd     = (
                 TP1_SIZE * trade.size_full * trade.sl_dist * TP1_R
                 + (1 - TP1_SIZE) * trade.size_full * 0.0
@@ -362,28 +369,19 @@ class SDPaperEngine:
 
         # ── TP2 hit (full win) ────────────────────────────────────────────
         if tp2_hit:
-            if trade.tp1_hit:
-                # TP1 already done; TP2 for remaining size
-                full_r  = TP1_SIZE * TP1_R + (1 - TP1_SIZE) * 1.5
-                pnl_usd = (
-                    TP1_SIZE * trade.size_full * trade.sl_dist * TP1_R
-                    + (1 - TP1_SIZE) * trade.size_full * trade.sl_dist * 1.5
-                    - SPREAD * trade.size_full
-                )
-            else:
-                # Both TP1 and TP2 hit in same bar (tp1_hit not set yet)
-                full_r  = TP1_SIZE * TP1_R + (1 - TP1_SIZE) * 1.5
-                pnl_usd = (
-                    trade.size_full * trade.sl_dist * full_r
-                    - SPREAD * trade.size_full
-                )
+            full_r  = TP1_SIZE * TP1_R + (1 - TP1_SIZE) * 1.5
+            pnl_usd = (
+                TP1_SIZE * trade.size_full * trade.sl_dist * TP1_R
+                + (1 - TP1_SIZE) * trade.size_full * trade.sl_dist * 1.5
+                - SPREAD * trade.size_full
+            )
             self._close_trade(trade, bar_ts, trade.tp2, "full_win", full_r, pnl_usd)
             return
 
         # ── TP1 hit (partial exit, SL → BE) ──────────────────────────────
         if tp1_hit and not trade.tp1_hit:
-            trade.tp1_hit       = True
-            trade.sl            = trade.entry_price   # SL → break-even
+            trade.tp1_hit        = True
+            trade.sl             = trade.entry_price   # SL → break-even
             trade.size_remaining = trade.size_full * (1 - TP1_SIZE)
             logger.info(
                 "TP1 hit — partial exit",
@@ -458,11 +456,12 @@ class SDPaperEngine:
         self._month = month
 
     def _unrealised_pnl(self, current_price: float) -> float:
-        """Mark-to-market P&L for the open trade (longs only)."""
+        """Mark-to-market P&L for the open trade (long or short)."""
         if self._open_trade is None:
             return 0.0
         t = self._open_trade
-        price_move = current_price - t.entry_price
+        is_long    = t.signal.direction == "long"
+        price_move = (current_price - t.entry_price) if is_long else (t.entry_price - current_price)
         return price_move * t.size_remaining
 
     def _log_summary(self) -> None:
