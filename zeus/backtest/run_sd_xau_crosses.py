@@ -153,30 +153,33 @@ def _period_files(folder: str) -> list[tuple[str, list[Path]]]:
     d   = _DATA / folder / "m1"
     periods = []
 
-    for year in [2024, 2025]:
-        candidates = [
-            d / f"DAT_MT_{sym}_M1_{year}.csv",
-            d / f"{sym}_M1_{year}.csv",
-        ]
-        found = next((f for f in candidates if f.exists()), None)
-        if found:
-            periods.append((str(year), [found]))
+    def _find(year: int) -> Path | None:
+        # Cherche MT (MetaTrader) puis MS (MetaStock) puis export broker
+        for name in [
+            f"DAT_MT_{sym}_M1_{year}.csv",
+            f"DAT_MS_{sym}_M1_{year}.csv",
+            f"{sym}_M1_{year}.csv",
+        ]:
+            p = d / name
+            if p.exists():
+                return p
+        return None
+
+    for year in [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]:
+        f = _find(year)
+        if f:
+            periods.append((str(year), [f]))
 
     # 2026 : fichier annuel, mensuel, ou nom libre (any *2026*.csv)
-    annual_candidates = [
-        d / f"DAT_MT_{sym}_M1_2026.csv",
-        d / f"{sym}_M1_2026.csv",
-    ]
-    annual = next((f for f in annual_candidates if f.exists()), None)
-    if annual:
-        periods.append(("2026", [annual]))
+    f2026 = _find(2026)
+    if f2026:
+        periods.append(("2026", [f2026]))
     else:
         monthly = [d / f"DAT_MT_{sym}_M1_2026{m:02d}.csv" for m in range(1, 7)]
-        found_m  = [f for f in monthly if f.exists()]
+        found_m = [f for f in monthly if f.exists()]
         if found_m:
             periods.append(("2026 Jan–Jun", found_m))
         else:
-            # Fichier avec nom quelconque contenant "2026" (ex. export broker)
             any_2026 = sorted(d.glob("*2026*.csv")) if d.exists() else []
             if any_2026:
                 periods.append(("2026", any_2026))

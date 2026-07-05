@@ -1,7 +1,11 @@
 """
-MT4/MT5 M1 data loader — supporte deux formats CSV :
+MT4/MT5 M1 data loader — supporte trois formats CSV :
 
-  Format A (HistData.com, default) — séparateur date/heure en deux colonnes :
+  Format MS (HistData.com MetaStock) — symbole + datetime compact :
+    SYMBOL,YYYYMMDDHHMM,open,high,low,close,volume
+    Timezone : New York (America/New_York) → converti en UTC tz-naive.
+
+  Format A (HistData.com MetaTrader) — séparateur date/heure en deux colonnes :
     YYYY.MM.DD,HH:MM,open,high,low,close,volume
     Timezone : New York (America/New_York) → converti en UTC tz-naive.
 
@@ -74,13 +78,45 @@ def _parse_format_b(path: str | Path) -> pd.DataFrame:
     return df[["open", "high", "low", "close", "volume"]].sort_index()
 
 
+def _parse_format_ms(path: str | Path) -> pd.DataFrame:
+    """Format MetaStock (HistData MS) : SYMBOL,YYYYMMDDHHMM,open,high,low,close,volume.
+
+    Timezone : New York (America/New_York) → converti en UTC tz-naive.
+    """
+    df = pd.read_csv(
+        path,
+        header=None,
+        names=["symbol", "datetime", "open", "high", "low", "close", "volume"],
+        dtype={"datetime": str},
+    )
+    df["datetime"] = pd.to_datetime(df["datetime"], format="%Y%m%d%H%M")
+    df = df.set_index("datetime")
+    df.index = (
+        df.index
+        .tz_localize(
+            "America/New_York",
+            ambiguous="infer",
+            nonexistent="shift_forward",
+        )
+        .tz_convert("UTC")
+        .tz_localize(None)
+    )
+    return df[["open", "high", "low", "close", "volume"]].sort_index()
+
+
 def parse_m1_csv(path: str | Path) -> pd.DataFrame:
     """
     Charge un fichier M1 CSV en détectant automatiquement le format :
-      - Format A (HistData) : première colonne contient '.' → YYYY.MM.DD
-      - Format B (autre source) : première colonne contient '-' → YYYY-MM-DD HH:MM
+      - Format MS (HistData MetaStock) : première colonne = symbole (lettre)
+        ex. XAUUSD,YYYYMMDDHHMM,open,...  — New York tz → UTC
+      - Format A  (HistData MetaTrader)  : première colonne contient '.' → YYYY.MM.DD
+        ex. YYYY.MM.DD,HH:MM,open,...    — New York tz → UTC
+      - Format B  (autre source)         : première colonne contient '-' → YYYY-MM-DD HH:MM
+        ex. YYYY-MM-DD HH:MM,open,...    — UTC direct
     """
     first = Path(path).open().readline().split(",")[0]
+    if first and first[0].isalpha():
+        return _parse_format_ms(path)
     if "." in first:
         return parse_histdata_csv(path)
     return _parse_format_b(path)
@@ -88,13 +124,14 @@ def parse_m1_csv(path: str | Path) -> pd.DataFrame:
 
 def load_m1_directory(
     data_dir: str | Path,
-    glob_pattern: str = "DAT_MT_*_M1_*.csv",
+    glob_pattern: str = "DAT_M[TS]_*_M1_*.csv",
 ) -> pd.DataFrame:
     """
     Load and concatenate all HistData M1 CSV files found in *data_dir*.
 
-    Files are matched by *glob_pattern* (default ``DAT_MT_*_M1_*.csv``) and
-    sorted chronologically by filename before concatenation.
+    Files are matched by *glob_pattern* (default ``DAT_M[TS]_*_M1_*.csv``, covers
+    both MetaTrader MT and MetaStock MS naming) and sorted chronologically by
+    filename before concatenation.
 
     Duplicate index entries (weekend/holiday artefacts) are dropped.
     """
@@ -103,7 +140,7 @@ def load_m1_directory(
     if not files:
         raise FileNotFoundError(f"No HistData CSVs found in {data_dir}")
 
-    parts = [parse_histdata_csv(f) for f in files]
+    parts = [parse_m1_csv(f) for f in files]
     df = pd.concat(parts).sort_index()
     df = df[~df.index.duplicated(keep="first")]
     return df
