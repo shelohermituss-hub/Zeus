@@ -9,6 +9,7 @@ dist/
 build/
 data/logs/
 data/historical/**/*.txt
+data/historical/**/*.csv
 *.db
 .venv/
 venv/
