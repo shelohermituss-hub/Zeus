@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from zeus.backtest.data_loader    import parse_histdata_csv, resample_ohlcv
+from zeus.backtest.data_loader    import parse_m1_csv, resample_ohlcv
 from zeus.backtest.sd_simulation  import compute_metrics, simulate_all
 from zeus.strategy.supply_demand.sd_strategy   import SDStrategy
 from zeus.strategy.supply_demand.wyckoff       import WyckoffDetector
@@ -113,6 +113,8 @@ VARIANTS: dict[str, dict] = {
 # ── Données par période ───────────────────────────────────────────────────────
 
 PERIODS = [
+    ("2017", [_M1 / "DAT_MS_XAUUSD_M1_2017.csv"]),
+    ("2018", [_M1 / "DAT_MS_XAUUSD_M1_2018.csv"]),
     ("2024", [_M1 / "DAT_MT_XAUUSD_M1_2024.csv"]),
     ("2025", [_M1 / "DAT_MT_XAUUSD_M1_2025.csv"]),
     ("2026 Jan–Mar (OOS)", [
@@ -130,7 +132,7 @@ PERIODS = [
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _load_m1(files: list[Path]) -> pd.DataFrame:
-    frames = [parse_histdata_csv(f) for f in files if f.exists()]
+    frames = [parse_m1_csv(f) for f in files if f.exists()]
     if not frames:
         raise FileNotFoundError(f"M1 data missing: {files}")
     df = pd.concat(frames).sort_index()
