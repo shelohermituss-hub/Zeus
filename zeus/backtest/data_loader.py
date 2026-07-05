@@ -1,20 +1,25 @@
 """
-HistData.com MT4/MT5 M1 data loader for XAUUSD backtests.
+MT4/MT5 M1 data loader — supporte deux formats CSV :
 
-File format (no header):
+  Format A (HistData.com, default) — séparateur date/heure en deux colonnes :
     YYYY.MM.DD,HH:MM,open,high,low,close,volume
+    Timezone : New York (America/New_York) → converti en UTC tz-naive.
 
-Timestamps are in New York time (America/New_York) — the standard for HistData
-forex/gold files. They are converted to tz-naive UTC on load so they integrate
-directly with the strategy's session detection logic.
+  Format B (autres sources) — datetime en colonne unique :
+    YYYY-MM-DD HH:MM,open,high,low,close,volume
+    Timezone : UTC supposé (pas de conversion).
+
+Le format est détecté automatiquement à partir de la première ligne.
 
 Typical usage
 -------------
-    from zeus.backtest.data_loader import load_m1_directory, build_timeframes
+    from zeus.backtest.data_loader import load_m1_directory, build_timeframes, parse_m1_csv
 
-    # Load all CSVs in the data directory and resample
+    # HistData format (auto-detect)
+    df = parse_m1_csv("data/historical/xauusd/m1/DAT_MT_XAUUSD_M1_2024.csv")
+
+    # Load all CSVs in a directory
     tfs = build_timeframes(load_m1_directory("data/historical/xauusd/m1"))
-    df_5m, df_1h, df_4h, df_1d = tfs["5min"], tfs["1h"], tfs["4h"], tfs["1d"]
 """
 from __future__ import annotations
 
@@ -55,6 +60,30 @@ def parse_histdata_csv(path: str | Path) -> pd.DataFrame:
         .tz_localize(None)          # tz-naive UTC for pandas compatibility
     )
     return df[["open", "high", "low", "close", "volume"]].sort_index()
+
+
+def _parse_format_b(path: str | Path) -> pd.DataFrame:
+    """Format B : YYYY-MM-DD HH:MM,open,high,low,close,volume — timestamps supposés UTC."""
+    df = pd.read_csv(
+        path,
+        header=None,
+        names=["datetime", "open", "high", "low", "close", "volume"],
+    )
+    df["datetime"] = pd.to_datetime(df["datetime"], format="%Y-%m-%d %H:%M")
+    df = df.set_index("datetime")
+    return df[["open", "high", "low", "close", "volume"]].sort_index()
+
+
+def parse_m1_csv(path: str | Path) -> pd.DataFrame:
+    """
+    Charge un fichier M1 CSV en détectant automatiquement le format :
+      - Format A (HistData) : première colonne contient '.' → YYYY.MM.DD
+      - Format B (autre source) : première colonne contient '-' → YYYY-MM-DD HH:MM
+    """
+    first = Path(path).open().readline().split(",")[0]
+    if "." in first:
+        return parse_histdata_csv(path)
+    return _parse_format_b(path)
 
 
 def load_m1_directory(

@@ -42,7 +42,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from zeus.backtest.data_loader    import parse_histdata_csv, resample_ohlcv
+from zeus.backtest.data_loader    import parse_m1_csv, resample_ohlcv
 from zeus.backtest.sd_simulation  import compute_metrics, simulate_all
 from zeus.strategy.supply_demand.sd_strategy   import SDStrategy
 from zeus.strategy.supply_demand.wyckoff       import WyckoffDetector
@@ -149,24 +149,37 @@ PAIRS: list[dict] = [
 
 def _period_files(folder: str) -> list[tuple[str, list[Path]]]:
     """Return (label, [files]) for each available period in this pair's directory."""
-    d = _DATA / folder / "m1"
+    sym = folder.upper()
+    d   = _DATA / folder / "m1"
     periods = []
 
     for year in [2024, 2025]:
-        f = d / f"DAT_MT_{folder.upper()}_M1_{year}.csv"
-        if f.exists():
-            periods.append((str(year), [f]))
-
-    # 2026 : fichier annuel ou mensuel
-    annual = d / f"DAT_MT_{folder.upper()}_M1_2026.csv"
-    if annual.exists():
-        periods.append(("2026 Jan–Jun", [annual]))
-    else:
-        monthly = [d / f"DAT_MT_{folder.upper()}_M1_2026{m:02d}.csv"
-                   for m in range(1, 7)]
-        found   = [f for f in monthly if f.exists()]
+        candidates = [
+            d / f"DAT_MT_{sym}_M1_{year}.csv",
+            d / f"{sym}_M1_{year}.csv",
+        ]
+        found = next((f for f in candidates if f.exists()), None)
         if found:
-            periods.append(("2026 Jan–Jun", found))
+            periods.append((str(year), [found]))
+
+    # 2026 : fichier annuel, mensuel, ou nom libre (any *2026*.csv)
+    annual_candidates = [
+        d / f"DAT_MT_{sym}_M1_2026.csv",
+        d / f"{sym}_M1_2026.csv",
+    ]
+    annual = next((f for f in annual_candidates if f.exists()), None)
+    if annual:
+        periods.append(("2026", [annual]))
+    else:
+        monthly = [d / f"DAT_MT_{sym}_M1_2026{m:02d}.csv" for m in range(1, 7)]
+        found_m  = [f for f in monthly if f.exists()]
+        if found_m:
+            periods.append(("2026 Jan–Jun", found_m))
+        else:
+            # Fichier avec nom quelconque contenant "2026" (ex. export broker)
+            any_2026 = sorted(d.glob("*2026*.csv")) if d.exists() else []
+            if any_2026:
+                periods.append(("2026", any_2026))
 
     return periods
 
@@ -186,7 +199,7 @@ VARIANTS: dict[str, dict] = {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _load_m1(files: list[Path]) -> pd.DataFrame:
-    frames = [parse_histdata_csv(f) for f in files if f.exists()]
+    frames = [parse_m1_csv(f) for f in files if f.exists()]
     if not frames:
         raise FileNotFoundError(str(files))
     df = pd.concat(frames).sort_index()
