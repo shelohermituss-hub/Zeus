@@ -406,12 +406,14 @@ def simulate_all(
     n_expired: int               = 0
     equity = initial_equity   # F-02: use caller-specified initial equity
 
-    _day_losses:   dict[str, int] = {}
-    _month_losses: dict[str, int] = {}
+    # Direction-aware loss counters: longs and shorts tracked independently.
+    # A losing long should not block a short signal on the same day, and vice versa.
+    _day_losses:   dict[str, int] = {}   # key = "YYYY-MM-DD|long" or "YYYY-MM-DD|short"
+    _month_losses: dict[str, int] = {}   # key = "YYYY-MM|long"  or "YYYY-MM|short"
 
     for sig in signals:
-        day_key   = sig.formed_at.strftime("%Y-%m-%d")
-        month_key = sig.formed_at.strftime("%Y-%m")
+        day_key   = f"{sig.formed_at.strftime('%Y-%m-%d')}|{sig.direction}"
+        month_key = f"{sig.formed_at.strftime('%Y-%m')}|{sig.direction}"
 
         if max_monthly_losses > 0 and _month_losses.get(month_key, 0) >= max_monthly_losses:
             n_expired += 1
