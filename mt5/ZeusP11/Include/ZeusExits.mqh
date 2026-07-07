@@ -106,6 +106,7 @@ bool ZeusManageExits(CTrade &trade, const string symbol,
      {
       double r_exit = t.direction * (t.sl - t.entry_price) / t.sl_dist;
       t.realized_r += t.remaining_frac * r_exit;
+      t.remaining_frac = 0.0;            // évite tout double comptage aval
       // côté broker : le SL attaché a déjà fermé le restant
       pnl_r_out  = t.realized_r;
       reason_out = "SL/BE";

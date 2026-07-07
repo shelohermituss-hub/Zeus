@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                                     ZeusP11.mq5  |
-//|  Expert Advisor — portefeuille propfirm P11-V4                   |
+//|  Expert Advisor — portefeuille propfirm P11-V4  (audit v2)       |
 //|                                                                  |
 //|  Port MQL5 de la stratégie Zeus S&D/Wyckoff validée :            |
 //|    - XAUUSD  : V4 production (WS 5.9/8.5, 4T Runner@20R)         |
@@ -8,18 +8,15 @@
 //|    - Guard propfirm : daily 3% · DD total 6% · 3 pertes/jour ·   |
 //|      flat 21h UTC · risque fixe (pas de compounding)             |
 //|                                                                  |
-//|  À attacher sur UN SEUL graphique (n'importe lequel, ex. XAUUSD  |
-//|  M1) — l'EA gère tous les symboles de InpSymbols via timer.      |
+//|  À attacher sur UN SEUL graphique — l'EA gère tous les symboles  |
+//|  de InpSymbols via timer.  Le M15 est resamplé depuis les M1     |
+//|  (jamais CopyRates M15) pour une parité exacte avec le Python.   |
 //|                                                                  |
-//|  AVANT TOUT TRADING RÉEL :                                       |
-//|    1. InpSignalLogMode=true sur données historiques →            |
-//|       comparer signals_*.csv avec le Python                      |
-//|       (zeus/backtest/compare_ea_signals.py) : exigence 100%.     |
-//|    2. Compte démo plusieurs semaines.                            |
-//|  Le trading réel sans ces validations viole les règles du projet.|
+//|  AVANT TOUT TRADING RÉEL : harnais d'équivalence (100%) puis     |
+//|  démo — voir README.md.                                          |
 //+------------------------------------------------------------------+
 #property copyright "Zeus"
-#property version   "1.00"
+#property version   "2.00"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -63,6 +60,7 @@ input bool   InpTradingEnabled     = true;      // false = observation seule
 
 // ═════════════════════════ ÉTAT ═════════════════════════════════════
 #define ZP11_MAX_SYMBOLS 16
+#define ZP11_M1_WINDOW   3000     // = M1_LIMIT du moteur Python
 
 string                 g_symbols[ZP11_MAX_SYMBOLS];
 int                    g_n_symbols = 0;
@@ -75,11 +73,12 @@ ZeusWyckoffParams      g_wy_params[ZP11_MAX_SYMBOLS];
 ZeusZoneParams         g_zone_params[ZP11_MAX_SYMBOLS];
 ZeusExitParams         g_exit_params[ZP11_MAX_SYMBOLS];
 ZeusOpenTrade          g_trades[ZP11_MAX_SYMBOLS];
-// caps par symbole/direction (jour et mois — clés AAAAMMJJ / AAAAMM)
+// caps par symbole/direction : [i][0]=long, [i][1]=short
 int                    g_day_loss_key[ZP11_MAX_SYMBOLS][2];
 int                    g_day_loss_cnt[ZP11_MAX_SYMBOLS][2];
 int                    g_mon_loss_key[ZP11_MAX_SYMBOLS][2];
 int                    g_mon_loss_cnt[ZP11_MAX_SYMBOLS][2];
+bool                   g_warmed_up[ZP11_MAX_SYMBOLS];
 
 ZeusGuardConfig        g_guard_cfg;
 ZeusGuardState         g_guard;
@@ -90,7 +89,6 @@ int                    g_log_handle     = INVALID_HANDLE;
 // ═════════════════════════ HELPERS ══════════════════════════════════
 double PipForSymbol(const string sym)
   {
-   // overrides explicites "SYM=pip;SYM=pip"
    string parts[];
    int n = StringSplit(InpPipOverrides, ';', parts);
    for(int i = 0; i < n; i++)
@@ -122,20 +120,34 @@ double LotsForRisk(const string sym, const double sl_dist, const double risk_usd
    double vmin = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
    double vmax = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
    if(step > 0)
-      lots = MathRound(lots / step) * step;
-   return MathMax(vmin, MathMin(vmax, lots));
+      lots = MathFloor(lots / step) * step;   // floor : jamais > risque cible
+   if(lots < vmin)
+      return 0.0;                             // risque min > cible → refus
+   return MathMin(vmax, lots);
+  }
+
+// Ticket de la position ouverte pour (symbole, magic) — compatible hedging
+ulong FindPositionTicket(const string sym)
+  {
+   for(int p = PositionsTotal() - 1; p >= 0; p--)
+     {
+      ulong tk = PositionGetTicket(p);
+      if(tk == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) == sym
+         && PositionGetInteger(POSITION_MAGIC) == InpMagic)
+         return tk;
+     }
+   return 0;
   }
 
 // ═════════════════════════ INIT ═════════════════════════════════════
 int OnInit()
   {
-   // décalage serveur → UTC
    if(InpServerUTCOffsetH == -99)
       g_utc_offset_sec = (int)(TimeCurrent() - TimeGMT());
    else
       g_utc_offset_sec = InpServerUTCOffsetH * 3600;
 
-   // guard
    ZeusGuardDefaults(g_guard_cfg);
    g_guard_cfg.max_daily_loss_pct = InpMaxDailyLossPct;
    g_guard_cfg.max_total_dd_pct   = InpMaxTotalDDPct;
@@ -149,7 +161,6 @@ int OnInit()
      }
    ZeusGuardInit(g_guard, InpAccountBalance);
 
-   // symboles
    string parts[];
    g_n_symbols = StringSplit(InpSymbols, ',', parts);
    if(g_n_symbols > ZP11_MAX_SYMBOLS) g_n_symbols = ZP11_MAX_SYMBOLS;
@@ -189,6 +200,7 @@ int OnInit()
          g_exit_params[i].runner_rr = InpFxRunnerRR;
         }
       ZeusTradeReset(g_trades[i]);
+      g_warmed_up[i] = false;
       for(int d = 0; d < 2; d++)
         {
          g_day_loss_key[i][d] = 0; g_day_loss_cnt[i][d] = 0;
@@ -201,9 +213,10 @@ int OnInit()
 
    if(InpSignalLogMode)
      {
-      string fname = StringFormat("ZeusP11_signals_%s.csv",
-                                  TimeToString(TimeCurrent(), TIME_DATE));
-      StringReplace(fname, ".", "-");
+      MqlDateTime now;
+      TimeToStruct(TimeCurrent(), now);
+      string fname = StringFormat("ZeusP11_signals_%04d%02d%02d.csv",
+                                  now.year, now.mon, now.day);
       g_log_handle = FileOpen(fname, FILE_WRITE | FILE_CSV | FILE_ANSI, ';');
       if(g_log_handle != INVALID_HANDLE)
          FileWrite(g_log_handle, "formed_at_utc", "symbol", "direction",
@@ -212,7 +225,7 @@ int OnInit()
      }
 
    EventSetTimer(InpTimerSeconds);
-   PrintFormat("ZeusP11 démarré : %d symboles · risque %.2f%% (%.0f$) · "
+   PrintFormat("ZeusP11 v2 démarré : %d symboles · risque %.2f%% (%.0f$) · "
                "guard daily %.0f%%/DD %.0f%% · offset UTC %+d h",
                g_n_symbols, InpRiskPerTradePct * 100,
                ZeusGuardRiskUSD(g_guard, g_guard_cfg),
@@ -235,14 +248,25 @@ void OnTimer()
       ProcessSymbol(i);
   }
 
+// Le testeur de stratégie n'appelle pas toujours OnTimer : OnTick relaie.
+void OnTick()
+  {
+   static datetime last_tick_run = 0;
+   if(TimeCurrent() - last_tick_run < InpTimerSeconds)
+      return;
+   last_tick_run = TimeCurrent();
+   for(int i = 0; i < g_n_symbols; i++)
+      ProcessSymbol(i);
+  }
+
 void ProcessSymbol(const int i)
   {
    string sym = g_symbols[i];
 
-   // ── Données M1 (ancien→récent) — on exclut la barre en formation ──
+   // ── Fenêtre M1 close (start=1 : exclut la barre en formation) ────
    MqlRates m1[];
    ArraySetAsSeries(m1, false);
-   int copied = CopyRates(sym, PERIOD_M1, 1, 3000, m1);   // start=1 : barres closes
+   int copied = CopyRates(sym, PERIOD_M1, 1, ZP11_M1_WINDOW, m1);
    if(copied < 300)
       return;
 
@@ -259,55 +283,88 @@ void ProcessSymbol(const int i)
       m1_close[k] = m1[k].close;
      }
    int n1 = copied;
-   datetime last_bar = m1_time[n1 - 1];
-   if(last_bar == g_sig_state[i].last_m1_processed)
+
+   if(m1_time[n1 - 1] == g_sig_state[i].last_m1_processed)
       return;                                    // pas de nouvelle barre close
 
-   // ── Sorties du trade ouvert ───────────────────────────────────────
-   if(g_trades[i].active)
+   // ── M15 resamplé depuis la MÊME fenêtre M1 (parité Python) ───────
+   datetime t15[];  double o15[], h15[], l15[], c15a[];
+   int n15 = 0;
+   ZeusResampleM15(m1_time, m1_open, m1_high, m1_low, m1_close, n1,
+                   t15, o15, h15, l15, c15a, n15);
+   if(n15 < 60)
+      return;
+
+   // ── Zones : re-détection + merge (une fois par nouvelle barre) ───
+   ZeusSDZone fresh[];
+   int nf = ZeusDetectZones(t15, o15, h15, l15, c15a, n15, g_zone_params[i], fresh);
+   ZeusMergeZones(g_sig_state[i], fresh, nf);
+
+   // ── Rattrapage : chaque barre close non traitée, dans l'ordre ────
+   int first_new = 0;
+   if(g_sig_state[i].last_m1_processed != 0)
      {
-      // Reconciliation : position fermée côté broker (SL touché) ?
-      bool pos_alive = PositionSelectByTicket(g_trades[i].ticket);
-      double pnl_r; string reason;
-      if(ZeusManageExits(g_trade, sym, g_trades[i], g_exit_params[i],
-                         m1_high[n1 - 1], m1_low[n1 - 1], pnl_r, reason)
-         || (!pos_alive && !InpSignalLogMode))
+      first_new = n1;                             // défaut : rien de nouveau
+      for(int k = n1 - 1; k >= 0; k--)
         {
-         if(!pos_alive && g_trades[i].active && g_trades[i].remaining_frac > 0)
-           {
-            // fermée par le SL broker entre deux ticks — même résultat que SL/BE
-            double r_exit = g_trades[i].direction
-                            * (g_trades[i].sl - g_trades[i].entry_price)
-                            / g_trades[i].sl_dist;
-            pnl_r  = g_trades[i].realized_r + g_trades[i].remaining_frac * r_exit;
-            reason = "SL/BE(broker)";
-           }
-         OnTradeFinished(i, last_bar, pnl_r, reason);
+         if(m1_time[k] <= g_sig_state[i].last_m1_processed)
+           { first_new = k + 1; break; }
+         if(k == 0)
+            first_new = 0;                        // tout est nouveau
         }
      }
 
-   // ── Données M15 pour les zones ────────────────────────────────────
-   MqlRates m15[];
-   ArraySetAsSeries(m15, false);
-   int c15 = CopyRates(sym, PERIOD_M15, 0, 400, m15);
-   if(c15 < 60)
-      return;
-   datetime t15[];  double o15[], h15[], l15[], c15a[];
-   ArrayResize(t15, c15);  ArrayResize(o15, c15);  ArrayResize(h15, c15);
-   ArrayResize(l15, c15);  ArrayResize(c15a, c15);
-   for(int k = 0; k < c15; k++)
+   bool first_run = (g_sig_state[i].last_m1_processed == 0);
+
+   for(int b = first_new; b < n1; b++)
      {
-      t15[k] = m15[k].time;  o15[k] = m15[k].open;  h15[k] = m15[k].high;
-      l15[k] = m15[k].low;   c15a[k] = m15[k].close;
+      // 1. Sorties du trade ouvert sur CETTE barre
+      if(g_trades[i].active)
+        {
+         double pnl_r = 0.0; string reason = "";
+         bool finished = ZeusManageExits(g_trade, sym, g_trades[i], g_exit_params[i],
+                                         m1_high[b], m1_low[b], pnl_r, reason);
+         if(!finished && !InpSignalLogMode)
+           {
+            // Réconciliation : SL broker a fermé la position entre 2 ticks
+            if(!PositionSelectByTicket(g_trades[i].ticket))
+              {
+               double r_exit = g_trades[i].direction
+                               * (g_trades[i].sl - g_trades[i].entry_price)
+                               / g_trades[i].sl_dist;
+               pnl_r    = g_trades[i].realized_r
+                          + g_trades[i].remaining_frac * r_exit;
+               reason   = "SL/BE(broker)";
+               finished = true;
+              }
+           }
+         if(finished)
+            OnTradeFinished(i, m1_time[b], pnl_r, reason);
+        }
+
+      // 2. État des zones sur CETTE barre
+      ZeusUpdateZonesOnBar(g_sig_state[i], m1_low[b], m1_high[b], m1_close[b],
+                           m1_time[b]);
+      g_sig_state[i].bar_counter++;
+     }
+   g_sig_state[i].last_m1_processed = m1_time[n1 - 1];
+
+   // Premier passage : warm-up de l'état uniquement, pas de signal
+   // (évite d'entrer sur un signal périmé au moment de l'attache)
+   if(first_run)
+     {
+      g_warmed_up[i] = true;
+      return;
      }
 
-   // ── Détection de signal ───────────────────────────────────────────
+   // ── Signal sur la dernière barre close uniquement ─────────────────
    ZeusSignal sig;
-   bool has_sig = ZeusDetectSignal(g_sig_state[i],
-                                   m1_time, m1_open, m1_high, m1_low, m1_close, n1,
-                                   t15, o15, h15, l15, c15a, c15,
-                                   g_sig_params[i], g_wy_params[i], g_zone_params[i],
-                                   g_utc_offset_sec, sig);
+   bool has_sig = ZeusDetectSignalOnBar(g_sig_state[i],
+                                        m1_time, m1_open, m1_high, m1_low,
+                                        m1_close, n1,
+                                        t15, c15a, h15, l15, n15,
+                                        g_sig_params[i], g_wy_params[i],
+                                        g_utc_offset_sec, sig);
    if(!has_sig)
       return;
 
@@ -326,23 +383,21 @@ void ProcessSymbol(const int i)
                    DoubleToString(sig.wyckoff_score, 2));
          FileFlush(g_log_handle);
         }
-      return;                                    // jamais d'ordre en mode log
+      return;
      }
 
-   // ── Filtres d'entrée (identiques au moteur Python) ────────────────
+   // ── Filtres d'entrée (moteur Python) ──────────────────────────────
    if(!InpTradingEnabled)                        return;
-   if(g_trades[i].active)                        return;  // 1 trade/symbole
+   if(g_trades[i].active)                        return;
 
    int dir_idx = (sig.direction > 0) ? 0 : 1;
    MqlDateTime dt;  TimeToStruct(ts_utc, dt);
    int dkey = dt.year * 10000 + dt.mon * 100 + dt.day;
    int mkey = dt.year * 100 + dt.mon;
-   int cap_d = g_is_xau[i] ? 1 : 1;              // caps V4 : 1 perte/jour/direction
-   int cap_m = 4;
-   if(g_day_loss_key[i][dir_idx] == dkey && g_day_loss_cnt[i][dir_idx] >= cap_d)
-      return;
-   if(g_mon_loss_key[i][dir_idx] == mkey && g_mon_loss_cnt[i][dir_idx] >= cap_m)
-      return;
+   if(g_day_loss_key[i][dir_idx] == dkey && g_day_loss_cnt[i][dir_idx] >= 1)
+      return;                                    // cap V4 : 1 perte/jour/direction
+   if(g_mon_loss_key[i][dir_idx] == mkey && g_mon_loss_cnt[i][dir_idx] >= 4)
+      return;                                    // cap V4 : 4 pertes/mois/direction
 
    if(!ZeusGuardCanTrade(g_guard, g_guard_cfg, ts_utc))
       return;
@@ -357,11 +412,14 @@ void ProcessSymbol(const int i)
    if(sl_dist <= 0)
       return;
    if((sig.direction > 0) != (sig.stop_loss < price))
-      return;                                    // SL du mauvais côté → refus
+      return;
 
    double lots = LotsForRisk(sym, sl_dist, risk_usd);
    if(lots <= 0)
+     {
+      PrintFormat("ZeusP11 %s: taille min broker > risque cible — trade refusé", sym);
       return;
+     }
 
    bool ok = (sig.direction > 0)
              ? g_trade.Buy(lots, sym, 0.0, sig.stop_loss, 0.0, "zeus-p11")
@@ -373,21 +431,28 @@ void ProcessSymbol(const int i)
       return;
      }
 
+   ulong ticket = FindPositionTicket(sym);        // fiable netting ET hedging
+   if(ticket == 0)
+     {
+      PrintFormat("ZeusP11 %s: position introuvable après fill — VÉRIFIER MANUELLEMENT", sym);
+      return;
+     }
+
    double fill = g_trade.ResultPrice();
    if(fill <= 0) fill = price;
 
    ZeusOpenTrade t;
    ZeusTradeReset(t);
-   t.active       = true;
-   t.ticket       = g_trade.ResultOrder();
-   t.direction    = sig.direction;
-   t.entry_price  = fill;
-   t.sl           = sig.stop_loss;
-   t.sl_dist      = MathAbs(fill - sig.stop_loss);
-   t.lots_initial = g_trade.ResultVolume();
+   t.active         = true;
+   t.ticket         = ticket;
+   t.direction      = sig.direction;
+   t.entry_price    = fill;
+   t.sl             = sig.stop_loss;
+   t.sl_dist        = MathAbs(fill - sig.stop_loss);
+   t.lots_initial   = g_trade.ResultVolume();
    t.remaining_frac = 1.0;
-   t.opened_at    = sig.formed_at;
-   g_trades[i]    = t;
+   t.opened_at      = sig.formed_at;
+   g_trades[i]      = t;
 
    PrintFormat("ZeusP11 %s: ENTRÉE %s %.2f lots @ %.5f SL %.5f (WS=%.2f zone=%.2f)",
                sym, (sig.direction > 0 ? "LONG" : "SHORT"),
@@ -407,8 +472,7 @@ void OnTradeFinished(const int i, const datetime bar_time,
      {
       int dir_idx = (g_trades[i].direction > 0) ? 0 : 1;
       MqlDateTime dt;
-      datetime opened_utc = ToUTC(g_trades[i].opened_at);
-      TimeToStruct(opened_utc, dt);
+      TimeToStruct(ToUTC(g_trades[i].opened_at), dt);
       int dkey = dt.year * 10000 + dt.mon * 100 + dt.day;
       int mkey = dt.year * 100 + dt.mon;
       if(g_day_loss_key[i][dir_idx] != dkey)

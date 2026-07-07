@@ -79,6 +79,12 @@ def main() -> int:
                     help="pip size (défaut : 0.01 JPY/metal-idx, sinon 0.0001)")
     ap.add_argument("--xau", action="store_true",
                     help="utiliser la config V4 or (sinon forex WS7.5)")
+    ap.add_argument("--start", default=None,
+                    help="ignorer les signaux avant cette date (warm-up EA), "
+                         "ex. 2025-01-15")
+    ap.add_argument("--all-per-bar", action="store_true",
+                    help="garder tous les signaux de référence par barre "
+                         "(défaut : 1er seulement, comme l'EA/live)")
     args = ap.parse_args()
 
     pip = args.pip if args.pip is not None else (0.01 if "JPY" in args.symbol else 0.0001)
@@ -102,9 +108,18 @@ def main() -> int:
              zone=s.zone_score, ws=s.wyckoff_score)
         for s in ref_signals
     ])
+    if not args.all_per_bar and not ref.empty:
+        # L'EA/live émet au plus 1 signal par barre (le 1er en ordre de zone) —
+        # aligner la référence sur cette sémantique
+        ref = ref.drop_duplicates(subset=["formed_at"], keep="first")
+    if args.start and not ref.empty:
+        cutoff = pd.Timestamp(args.start)
+        ref = ref[ref["formed_at"] >= cutoff]
     print(f"Référence Python : {len(ref)} signaux")
 
     ea = _load_ea_signals(Path(args.signals), args.symbol)
+    if args.start and not ea.empty:
+        ea = ea[ea["formed_at_utc"] >= pd.Timestamp(args.start)]
     print(f"EA MQL5          : {len(ea)} signaux")
 
     # ── Comparaison par (timestamp, direction) ────────────────────────

@@ -14,6 +14,7 @@ l'instanciation lève RuntimeError — PaperRouter reste utilisable partout.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
@@ -99,7 +100,8 @@ class MT5Router:
             raise RuntimeError(f"{symbol}: perte/lot nulle — SL trop proche")
         lots = risk_usd / loss_per_lot
         step = info.volume_step or 0.01
-        lots = max(info.volume_min, min(info.volume_max, round(lots / step) * step))
+        # floor (pas round) : le risque réel ne dépasse JAMAIS le risque cible
+        lots = max(info.volume_min, min(info.volume_max, math.floor(lots / step) * step))
         return round(lots, 8)
 
     # — API —
