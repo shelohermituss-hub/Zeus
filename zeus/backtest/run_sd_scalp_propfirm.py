@@ -14,10 +14,15 @@ Contraintes propfirm (PropFirmGuard, limites internes strictes) :
   - Arrêt définitif  : drawdown total 6% depuis le solde initial
   - Aucune entrée après 21h UTC
 
-Variantes :
-  S1 — Zones M5 · WS 5.9/8.5 · sorties scalp
-  S2 — Zones M5 · WS 6.5/8.5 · sorties scalp (qualité stricte)
-  S3 — Zones M15 (V4) · sorties scalp        (isole l'effet des sorties)
+Variantes actives :
+  S3 — Zones M15 (V4) · sorties scalp · risque 0.3% · sans caps V4
+  S4 — S3 + caps V4 (max_daily_losses=1, max_monthly_losses=4)
+  S5 — S4 · risque 0.5%
+  S6 — S4 · risque 0.5% · TP3@5R
+
+Résultat historique (variantes retirées) : les zones M5 (S1 WS 5.9, S2 WS 6.5)
+sont négatives sur presque toutes les périodes — l'edge de la stratégie vit
+dans les zones M15 ; le M5 n'apporte que du bruit.
 
 Le rapport mesure, par variante × période : trades, WR, R total, trades/jour,
 pire journée, DD max sur equity propfirm, trades bloqués par le guard,
@@ -58,16 +63,20 @@ _WY = dict(
     min_mss_strength_pct = 0.03,
 )
 
-# Sorties scalp : TP1@1R (50% + BE) · TP2@2R (75%) · TP3@3R (100%)
-_SCALP_EXITS = dict(
-    use_be             = True,
-    tp1_r              = 1.0,
-    tp1_size           = 0.5,
-    tp2_r              = 2.0,
-    tp2_cumulative_pct = 0.75,
-    tp3_r              = 3.0,
-    tp3_cumulative_pct = 1.0,
-)
+# Sorties scalp : TP1@1R (50% + BE) · TP2@2R (75%) · TP3 (100%)
+def _scalp_exits(tp3_r: float) -> dict:
+    return dict(
+        use_be             = True,
+        tp1_r              = 1.0,
+        tp1_size           = 0.5,
+        tp2_r              = 2.0,
+        tp2_cumulative_pct = 0.75,
+        tp3_r              = tp3_r,
+        tp3_cumulative_pct = 1.0,
+    )
+
+# Caps de pertes V4 (prouvés sur le swing : coupent les années bear)
+_CAPS_V4 = dict(max_daily_losses=1, max_monthly_losses=4)
 
 _BASE = dict(
     min_zone_score          = 5.0,
@@ -85,18 +94,22 @@ _BASE = dict(
     use_rsi_filter          = False,
 )
 
+# Tous sur zones M15 + WS 5.9/8.5 : les signaux sont identiques, seule la
+# simulation change (caps, risque, TP final) — générés une fois par période.
+_STRAT_M15 = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5)
+
 VARIANTS: dict[str, dict] = {
-    "S1 — Zones M5 · WS 5.9/8.5 · sorties scalp": dict(
-        zone_tf = "5min",
-        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5),
+    "S3 — sorties scalp · risque 0.3% · sans caps": dict(
+        exits=_scalp_exits(3.0), rr=3.0, risk=0.003, caps={},
     ),
-    "S2 — Zones M5 · WS 6.5/8.5 · qualité stricte": dict(
-        zone_tf = "5min",
-        strat   = dict(min_wyckoff_score=6.5, min_wyckoff_score_short=8.5),
+    "S4 — caps V4 · risque 0.3% · TP3@3R": dict(
+        exits=_scalp_exits(3.0), rr=3.0, risk=0.003, caps=_CAPS_V4,
     ),
-    "S3 — Zones M15 (V4) · sorties scalp": dict(
-        zone_tf = "15min",
-        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5),
+    "S5 — caps V4 · risque 0.5% · TP3@3R": dict(
+        exits=_scalp_exits(3.0), rr=3.0, risk=0.005, caps=_CAPS_V4,
+    ),
+    "S6 — caps V4 · risque 0.5% · TP3@5R": dict(
+        exits=_scalp_exits(5.0), rr=5.0, risk=0.005, caps=_CAPS_V4,
     ),
 }
 
@@ -133,13 +146,17 @@ def _build_strategy(strat_params: dict) -> SDStrategy:
 def _replay_through_guard(
     results: list,
     m1_index: pd.DatetimeIndex,
+    risk_pct: float = 0.003,
 ) -> dict:
     """Rejoue les trades chronologiquement dans le PropFirmGuard (risque fixe).
 
     Retourne les métriques propfirm : equity finale, DD max, pire journée,
     trades bloqués, jours d'arrêt, temps jusqu'à la cible +10%.
     """
-    guard = PropFirmGuard(PropFirmConfig(), initial_balance=ACCOUNT_BALANCE)
+    guard = PropFirmGuard(
+        PropFirmConfig(risk_per_trade_pct=risk_pct),
+        initial_balance=ACCOUNT_BALANCE,
+    )
     risk_usd = guard.risk_amount_usd()
 
     equity      = ACCOUNT_BALANCE
@@ -211,15 +228,19 @@ def main() -> None:
           "sorties TP1@1R(50%)·TP2@2R(75%)·TP3@3R")
     print("═" * _W)
 
-    print("\n  Chargement M1…")
-    period_data: list[tuple[str, pd.DataFrame]] = []
+    print("\n  Chargement M1 + génération des signaux (une passe par période)…")
+    period_data: list[tuple[str, pd.DataFrame, list]] = []
     for label, files in PERIODS:
         try:
             m1 = _load_m1(files)
-            period_data.append((label, m1))
-            print(f"    ✓  {label:<10} {len(m1):>8,} barres M1")
         except FileNotFoundError as e:
             print(f"    ✗  {label}  MANQUANT — {e}")
+            continue
+        zone_df  = resample_ohlcv(m1, "15min")
+        strategy = _build_strategy(_STRAT_M15)
+        signals  = strategy.run(zone_df, m1)
+        period_data.append((label, m1, signals))
+        print(f"    ✓  {label:<10} {len(m1):>8,} barres M1  |  {len(signals)} signaux")
 
     for vname, vcfg in VARIANTS.items():
         print(f"\n  ┌{'─' * (_W - 4)}┐")
@@ -228,24 +249,21 @@ def main() -> None:
         print(f"  {'Période':<10} {'Pris':>5} {'Bloq':>5}  {'W':>3} {'L':>3} "
               f"{'WR%':>6}  {'R':>8}  {'PnL$':>9}  {'DDmax':>6}  {'PireJ':>6}  "
               f"{'Jours':>5}  {'→+10%':>6}  Statut")
-    # (en-tête répété par variante pour lisibilité des blocs)
         print("  " + "─" * (_W - 2))
 
         all_ok = True
-        for label, m1 in period_data:
-            zone_df  = resample_ohlcv(m1, vcfg["zone_tf"])
-            strategy = _build_strategy(vcfg["strat"])
-            signals  = strategy.run(zone_df, m1)
-            signals  = [dataclasses.replace(s, risk_reward=SCALP_RR) for s in signals]
+        for label, m1, signals in period_data:
+            sigs = [dataclasses.replace(s, risk_reward=vcfg["rr"]) for s in signals]
 
             results, _ = simulate_all(
-                signals, m1,
-                risk_pct = 0.003,
+                sigs, m1,
+                risk_pct = vcfg["risk"],
                 spread   = SPREAD,
                 initial_equity = ACCOUNT_BALANCE,
-                **_SCALP_EXITS,
+                **vcfg["exits"],
+                **vcfg["caps"],
             )
-            m = _replay_through_guard(results, m1.index)
+            m = _replay_through_guard(results, m1.index, risk_pct=vcfg["risk"])
 
             dec = m["w"] + m["l"]
             wr  = m["w"] / dec * 100 if dec else 0.0
