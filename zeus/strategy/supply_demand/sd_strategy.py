@@ -208,6 +208,9 @@ class SDStrategy:
         max_sl_pips:          float = 0.0,   # when > 0, reject signals whose SL distance exceeds this many pips
         use_price_above_ema_for_shorts: bool = False,  # when False (default), skip price-vs-EMA check for shorts
                                                         # (EMA slope is sufficient; supply zones form above declining EMA)
+        use_daily_ema_filter:         bool  = False,  # block longs in bear regime (price < daily EMA)
+        daily_ema_period:             int   = 200,    # daily EMA lookback
+        min_wyckoff_score_short_bear: Optional[float] = None,  # lower short threshold in bear regime
     ) -> None:
         self._zones    = zone_detector    or ZoneDetector()
         self._wyckoff  = wyckoff_detector or WyckoffDetector()
@@ -250,6 +253,9 @@ class SDStrategy:
         self.use_wyckoff_sl                 = use_wyckoff_sl
         self.max_sl_pips                    = max_sl_pips
         self.use_price_above_ema_for_shorts = use_price_above_ema_for_shorts
+        self.use_daily_ema_filter           = use_daily_ema_filter
+        self.daily_ema_period               = daily_ema_period
+        self.min_wyckoff_score_short_bear   = min_wyckoff_score_short_bear
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -486,6 +492,23 @@ class SDStrategy:
         else:
             _m1_rsi = None
 
+        # Daily 200 EMA regime filter (optional) — no look-ahead via shift(1)
+        if self.use_daily_ema_filter:
+            d1_close = m1_df["close"].resample("1D").last().dropna()
+            _d1_ema_raw     = d1_close.ewm(span=self.daily_ema_period, adjust=False).mean()
+            _d1_ema_shifted = _d1_ema_raw.shift(1)       # previous day's EMA only
+            _d1_close_shifted = d1_close.shift(1)         # previous day's close
+            _d1_ts_vals = d1_close.index.values
+            m1_to_d1 = np.searchsorted(_d1_ts_vals, _m1_ts_vals, side="right") - 1
+            m1_to_d1 = np.clip(m1_to_d1, 0, len(d1_close) - 1)
+            _d1_ema_vals   = _d1_ema_shifted.to_numpy(dtype=float)
+            _d1_close_vals = _d1_close_shifted.to_numpy(dtype=float)
+            _daily_bull: np.ndarray | None = (_d1_close_vals > _d1_ema_vals)[m1_to_d1]
+            _daily_bear: np.ndarray | None = ~_daily_bull
+        else:
+            _daily_bull = None
+            _daily_bear = None
+
         # ── Wyckoff cache ─────────────────────────────────────────────────────
         _wy_cache: dict[tuple, object] = {}
 
@@ -533,10 +556,20 @@ class SDStrategy:
             if not candidates.any():
                 continue
 
+            # Daily EMA regime gate — block longs in bear regime
+            if _daily_bull is not None:
+                if not bool(_daily_bull[i]):
+                    candidates &= ~_dem  # price below daily EMA: no longs
+
             # Trend filter
             if self.use_trend_filter:
                 long_ok  = bool(_trend_bull[i])   # short lookback — responds to local bounces
-                short_ok = bool(_trend_bear[i])   # longer lookback — captures macro direction
+                # Bear regime: if daily EMA says bear and short threshold is lowered,
+                # don't require M15 slope confirmation for shorts (macro regime is enough)
+                if _daily_bear is not None and bool(_daily_bear[i]) and self.min_wyckoff_score_short_bear is not None:
+                    short_ok = True  # bear regime unlocks shorts regardless of M15 slope
+                else:
+                    short_ok = bool(_trend_bear[i])   # longer lookback — captures macro direction
                 # Keep demand zones only when local trend is bullish;
                 # keep supply zones only when macro trend is bearish.
                 # Both can be true simultaneously during a counter-trend rally in a
@@ -609,8 +642,16 @@ class SDStrategy:
                 wyckoff = _wy_cache[wy_key]
                 if wyckoff is False:
                     continue
-                min_wy = (self.min_wyckoff_score_long if zone.side == PivotSide.DEMAND
-                          else self.min_wyckoff_score_short)
+                if zone.side == PivotSide.DEMAND:
+                    min_wy = self.min_wyckoff_score_long
+                elif (
+                    _daily_bear is not None
+                    and bool(_daily_bear[i])
+                    and self.min_wyckoff_score_short_bear is not None
+                ):
+                    min_wy = self.min_wyckoff_score_short_bear  # bear regime: shorts easier
+                else:
+                    min_wy = self.min_wyckoff_score_short
                 if wyckoff.score < min_wy:
                     continue
 

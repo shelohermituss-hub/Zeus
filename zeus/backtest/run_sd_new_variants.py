@@ -108,6 +108,27 @@ VARIANTS: dict[str, dict] = {
         sim     = dict(use_tp2_trailing=True,  tp2_trailing_factor=1.5),
         atr_src = "m30",
     ),
+    "V9 — EMA200D régime + Short_bear≥6.0": dict(
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5,
+                       use_daily_ema_filter=True, daily_ema_period=200,
+                       min_wyckoff_score_short_bear=6.0),
+        sim     = dict(use_tp2_trailing=False, tp2_trailing_factor=1.5),
+        atr_src = "h4",
+    ),
+    "V10 — EMA200D régime + Short_bear≥6.5": dict(
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5,
+                       use_daily_ema_filter=True, daily_ema_period=200,
+                       min_wyckoff_score_short_bear=6.5),
+        sim     = dict(use_tp2_trailing=False, tp2_trailing_factor=1.5),
+        atr_src = "h4",
+    ),
+    "V11 — EMA200D régime + Short_bear≥7.0": dict(
+        strat   = dict(min_wyckoff_score=5.9, min_wyckoff_score_short=8.5,
+                       use_daily_ema_filter=True, daily_ema_period=200,
+                       min_wyckoff_score_short_bear=7.0),
+        sim     = dict(use_tp2_trailing=False, tp2_trailing_factor=1.5),
+        atr_src = "h4",
+    ),
 }
 
 # ── Données par période ───────────────────────────────────────────────────────
