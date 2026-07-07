@@ -25,6 +25,7 @@ import pandas as pd
 
 from zeus.backtest.data_loader import resample_ohlcv
 from zeus.exchange.connector import ExchangeConnector
+from zeus.live.order_router import OrderRouter, PaperRouter
 from zeus.live.p11_config import ExitsConfig, GroupConfig, P11Config, SymbolConfig
 from zeus.risk.propfirm import PropFirmGuard
 from zeus.strategy.supply_demand.sd_strategy import SDSignal, SDStrategy
@@ -51,6 +52,8 @@ class P11Trade:
     tp1_done:       bool = False
     tp2_done:       bool = False
     tp3_done:       bool = False
+    lots:           float = 0.0         # taille broker (0 en paper)
+    ticket:         int = 0             # ticket de position MT5 (0 en paper)
 
     def r_at(self, price: float) -> float:
         sign = 1.0 if self.direction == "long" else -1.0
@@ -90,10 +93,12 @@ class P11Engine:
         config:    P11Config,
         connector: ExchangeConnector,
         notifier=None,
+        router:    Optional[OrderRouter] = None,
     ) -> None:
         self.config    = config
         self.connector = connector
         self.notifier  = notifier
+        self.router    = router if router is not None else PaperRouter()
         self._running  = False
 
         self.guard = PropFirmGuard(config.propfirm, initial_balance=config.account_balance)
@@ -208,10 +213,22 @@ class P11Engine:
             logger.warning("SL incohérent — entrée refusée", symbol=name)
             return
 
+        fill = self.router.open_position(
+            st.cfg.broker_symbol, sig.direction, sl, self.risk_usd, entry_price,
+        )
+        if fill is None:
+            logger.warning("Ordre refusé par le routeur — pas de trade", symbol=name)
+            return
+        entry_price = fill.price
+        sl_dist = abs(entry_price - sl)
+        if sl_dist <= 0:
+            return
+
         trade = P11Trade(
             symbol=name, direction=sig.direction,
             entry_price=entry_price, sl=sl, sl_dist=sl_dist,
             exits=st.group.exits, opened_at=sig.formed_at,
+            lots=fill.lots, ticket=fill.ticket,
         )
         st.open_trade = trade
         logger.info(
@@ -244,8 +261,10 @@ class P11Engine:
 
         # SL / BE d'abord (résolution pessimiste, comme le backtest)
         if sl_hit():
+            # En live, le SL attaché côté broker a déjà fermé le restant.
             r_exit = tr.r_at(tr.sl)
             tr.realized_r += tr.remaining * r_exit
+            tr.remaining = 0.0
             self._close(name, st, ts_now, reason="SL/BE")
             return
 
@@ -256,7 +275,10 @@ class P11Engine:
                 closed = ex.tp1_close_pct
                 tr.realized_r += closed * ex.tp1_r
                 tr.remaining -= closed
+                self.router.partial_close(st.cfg.broker_symbol, tr.ticket,
+                                          tr.direction, tr.lots * closed)
             tr.sl = tr.entry_price          # break-even
+            self.router.modify_sl(st.cfg.broker_symbol, tr.ticket, tr.sl)
             logger.info("TP1 — SL→BE", symbol=name, closed_pct=ex.tp1_close_pct)
 
         if not tr.tp2_done and hit(tr.level(ex.tp2_r)):
@@ -265,6 +287,9 @@ class P11Engine:
             closed = max(0.0, target_closed - (1.0 - tr.remaining))
             tr.realized_r += closed * ex.tp2_r
             tr.remaining -= closed
+            if closed > 0:
+                self.router.partial_close(st.cfg.broker_symbol, tr.ticket,
+                                          tr.direction, tr.lots * closed)
             logger.info("TP2", symbol=name, closed_pct=closed)
 
         if ex.tp3_r > 0 and not tr.tp3_done and hit(tr.level(ex.tp3_r)):
@@ -273,10 +298,16 @@ class P11Engine:
             closed = max(0.0, target_closed - (1.0 - tr.remaining))
             tr.realized_r += closed * ex.tp3_r
             tr.remaining -= closed
+            if closed > 0:
+                self.router.partial_close(st.cfg.broker_symbol, tr.ticket,
+                                          tr.direction, tr.lots * closed)
             logger.info("TP3", symbol=name, closed_pct=closed)
 
         if hit(tr.level(ex.runner_rr)):
             tr.realized_r += tr.remaining * ex.runner_rr
+            if tr.remaining > 0:
+                self.router.close_position(st.cfg.broker_symbol, tr.ticket,
+                                           tr.direction, tr.lots * tr.remaining)
             tr.remaining = 0.0
             self._close(name, st, ts_now, reason="RUNNER")
 
