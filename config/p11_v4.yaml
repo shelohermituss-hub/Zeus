@@ -1,0 +1,122 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  ZEUS — Portefeuille propfirm P11-V4 · configuration du bot MT5
+# ═══════════════════════════════════════════════════════════════════════════
+#  Les valeurs ci-dessous sont les paramètres VALIDÉS par backtest
+#  (2024 : +46% · 2025 : +121% à risque 0.6% · DD max ~4.5% · zéro breach).
+#  Modifie ce fichier pour ajuster le bot — le code n'a pas besoin d'être touché.
+#  Toute valeur invalide fait refuser le démarrage (fail closed).
+# ═══════════════════════════════════════════════════════════════════════════
+
+mode: paper            # paper | live — le live exige un paper trading validé
+account_balance: 100000 # solde initial du compte propfirm (USD)
+
+# ── Risque & garde-fou propfirm (limites INTERNES, plus strictes que la firm) ──
+risk:
+  risk_per_trade_pct: 0.006   # 0.6% recommandé · 0.005 prudent · 0.0075 max validé
+  max_daily_loss_pct: 0.03    # arrêt de la journée à −3%
+  max_total_dd_pct:   0.06    # arrêt DÉFINITIF du compte à −6% (limite firm : 10%)
+  max_losses_per_day: 3       # stop journalier après N pertes
+  flat_hour_utc:      21      # plus aucune entrée à partir de cette heure UTC
+  profit_target_pct:  0.10    # cible challenge phase 1
+  min_trading_days:   4       # minimum de jours de trading du challenge
+
+# ── Groupes de stratégie ──────────────────────────────────────────────────────
+# Chaque symbole référence un groupe ; les valeurs d'un symbole peuvent
+# surcharger celles de son groupe (voir GRXEUR plus bas).
+strategy_groups:
+  xau_v4:                      # or — V4 production (8.5 ans de validation)
+    zone_timeframe: 15m
+    wyckoff:
+      lookback: 200
+      max_accum_bars: 20
+      accum_range_mult: 6.0
+      mss_lookback: 60
+      min_spring_sweep_pct: 0.05
+      min_mss_strength_pct: 0.03
+    signals:
+      min_zone_score: 5.0
+      min_composite_score: 5.0
+      min_wyckoff_score_long: 5.9
+      min_wyckoff_score_short: 8.5
+      signal_cooldown: 10
+      trend_slope_lookback: 3
+      use_price_above_ema: true
+      session_start_utc: 7
+      session_end_utc: 21
+      max_signals_per_day: 10
+    exits:                     # 4T Runner — TP1@1R(BE) · TP2@3R(60%) · TP3@8R(85%) · Runner@20R
+      tp1_r: 1.0
+      tp1_close_pct: 0.0       # 0% fermé à TP1, mais SL déplacé à break-even
+      tp2_r: 3.0
+      tp2_cumulative_pct: 0.60
+      tp3_r: 8.0
+      tp3_cumulative_pct: 0.85
+      runner_rr: 20.0
+    caps:                      # par symbole et par direction
+      max_daily_losses: 1
+      max_monthly_losses: 4
+
+  forex_ws75:                  # forex/indices/argent — WS7.5 + TIERED-5R (OOS 2023)
+    zone_timeframe: 15m
+    wyckoff:
+      lookback: 200
+      max_accum_bars: 20
+      accum_range_mult: 6.0
+      mss_lookback: 60
+      min_spring_sweep_pct: 0.10
+      min_mss_strength_pct: 0.03
+    signals:
+      min_zone_score: 4.0
+      min_composite_score: 4.0
+      min_wyckoff_score_long: 7.5
+      min_wyckoff_score_short: 6.5
+      signal_cooldown: 10
+      trend_slope_lookback: 3
+      use_price_above_ema: true
+      ema_atr_tolerance: 0.5
+      session_start_utc: 7
+      session_end_utc: 17
+      max_signals_per_day: 6
+      min_sl_pips: 5
+    exits:                     # TIERED-5R — TP1@1.5R(33%) · TP2@5R(70%) · Runner@10R
+      tp1_r: 1.5
+      tp1_close_pct: 0.33
+      tp2_r: 5.0
+      tp2_cumulative_pct: 0.70
+      runner_rr: 10.0
+    caps:
+      max_daily_losses: 1
+      max_monthly_losses: 4
+
+# ── Les 11 symboles du portefeuille ──────────────────────────────────────────
+# enabled: false pour retirer une paire sans la supprimer.
+# broker_symbol : le nom EXACT chez ton broker s'il diffère (ex. GER40, XAUUSD.a).
+symbols:
+  XAUUSD: {enabled: true, group: xau_v4,     pip_size: 0.01,   broker_symbol: XAUUSD}
+  GBPUSD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: GBPUSD}
+  EURUSD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: EURUSD}
+  GBPAUD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: GBPAUD}
+  EURNZD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: EURNZD}
+  USDCHF: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: USDCHF}
+  GRXEUR: {enabled: true, group: forex_ws75, pip_size: 1.0,    broker_symbol: GER40}
+  CADJPY: {enabled: true, group: forex_ws75, pip_size: 0.01,   broker_symbol: CADJPY}
+  NZDUSD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: NZDUSD}
+  EURJPY: {enabled: true, group: forex_ws75, pip_size: 0.01,   broker_symbol: EURJPY}
+  XAGUSD: {enabled: true, group: forex_ws75, pip_size: 0.01,   broker_symbol: XAGUSD}
+
+# ── Exécution ────────────────────────────────────────────────────────────────
+execution:
+  poll_seconds: 30            # fréquence de scan du marché
+  history_days: 30            # M1 chargé au démarrage (warm-up zones/EMA)
+  magic_number: 20260707      # identifiant des ordres du bot dans MT5
+  max_slippage_points: 20
+  dry_run: false              # true = tout sauf l'envoi réel des ordres
+
+# ── Monitoring ───────────────────────────────────────────────────────────────
+monitoring:
+  telegram_enabled: false     # true + variables d'env TELEGRAM_* pour activer
+  log_level: INFO
+
+# Les identifiants MT5 (login, mot de passe, serveur) ne vont JAMAIS ici :
+# ils viennent des variables d'environnement ZEUS_MT5_LOGIN,
+# ZEUS_MT5_PASSWORD, ZEUS_MT5_SERVER (voir zeus/config.py).
