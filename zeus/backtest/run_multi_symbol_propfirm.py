@@ -1,6 +1,7 @@
-"""Portefeuille multi-symboles sous guard propfirm (P11).
+"""Portefeuille multi-symboles sous guard propfirm (P11-V4).
 
-Portefeuille : XAUUSD (S6 : V4 + sorties scalp 1R/2R/5R)
+Portefeuille : XAUUSD en V4 production (4T : TP1@1R·BE, TP2@3R 60%,
+               TP3@8R 85%, Runner@20R)
              + cluster forex validé (GBPUSD, EURUSD, GBPAUD, EURNZD — WS7.5, TIERED-5R)
              + admises 2025 (USDCHF, GRXEUR)
              + marginales positives toutes années (CADJPY, NZDUSD, EURJPY, XAGUSD)
@@ -9,11 +10,14 @@ Les trades de tous les symboles sont fusionnés chronologiquement puis rejoués
 dans le PropFirmGuard (risque fixe, limites internes strictes) à trois niveaux
 de risque : 0.5%, 0.75%, 1%.
 
-Résultats de référence P11 (2024 + 2025, ~2.2-2.3 trades/jour tradé) :
-  0.50% : +30.0% / +89.9% par an · DD ≤ 3.26% · cible +10% en 33-102 j
-  0.75% : +45.0% / +134.9% par an · DD ≤ 4.89% · cible +10% en 33-95 j  ← RETENU
-  1.00% : FAIL 2025 (portefeuille 5 symboles) — le drawdown interne 6% est
-          touché en janvier et le compte est arrêté définitivement.
+Résultats de référence P11-V4 (2024 + 2025) :
+  0.50% : +38.5% / +100.9% par an · DD ≤ 3.75% · cible +10% en 33-124 j
+  0.75% : +57.7% / +151.4% par an · DD ≤ 5.63% · cible +10% en 39-67 j
+          (marge fine : 0.37 pt sous la limite interne 6% en 2025)
+  1.00% : FAIL — le drawdown interne 6% est touché et le compte arrêté.
+  Recommandation : 0.60% ≈ +46% / +121% par an · DD ~4.5% · marge saine.
+
+OOS juin 2026 (composition S6, avant bascule V4) : −0.2%, DD 1.13%, 0 breach.
 
 Caveats : USDCHF, GRXEUR et XAGUSD n'ont qu'une année de données (2025) ;
 CADJPY/NZDUSD/EURJPY sont sous le seuil WR 55% une année sur deux mais
@@ -65,9 +69,12 @@ def _strat_fx(pip_size: float) -> dict:
         min_wyckoff_score=7.5, min_wyckoff_score_short=6.5,
     )
 
-_EXITS_XAU = dict(use_be=True, tp1_r=1.0, tp1_size=0.5,
-                  tp2_r=2.0, tp2_cumulative_pct=0.75,
-                  tp3_r=5.0, tp3_cumulative_pct=1.0,
+# XAUUSD en V4 production (4T Runner@20R) — retenu après comparaison avec les
+# sorties scalp S6 : PnL supérieur (+57.7%/+151.4% vs +45.0%/+134.9% à 0.75%)
+# pour un DD qui reste sous la limite interne (max 5.63% en 2025).
+_EXITS_XAU = dict(tp1_r=1.0, tp1_size=0.0,
+                  tp2_r=3.0, tp2_cumulative_pct=0.60,
+                  tp3_r=8.0, tp3_cumulative_pct=0.85,
                   max_daily_losses=1, max_monthly_losses=4)
 _EXITS_FX  = dict(tp1_r=1.5, tp1_size=0.33,
                   tp2_r=5.0, tp2_cumulative_pct=0.70,
@@ -79,7 +86,7 @@ _EXITS_FX  = dict(tp1_r=1.5, tp1_size=0.33,
 # inférieur (2024 : +45.0% / DD 3.76% vs +35.8% / DD 4.88% à risque 0.75%).
 SYMBOLS = [
     # (sym, folder, spread quote, q2u quote/USD, wyckoff, strat, exits, rr)
-    ("XAUUSD", "xauusd", 0.30,    1.00,  _WY_XAU, _STRAT_XAU,        _EXITS_XAU, 5.0),
+    ("XAUUSD", "xauusd", 0.30,    1.00,  _WY_XAU, _STRAT_XAU,        _EXITS_XAU, 20.0),
     ("GBPUSD", "gbpusd", 0.0001,  1.00,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
     ("EURUSD", "eurusd", 0.0001,  1.00,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
     ("GBPAUD", "gbpaud", 0.0002,  1.52,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
