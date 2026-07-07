@@ -1,17 +1,23 @@
-"""Portefeuille multi-symboles sous guard propfirm.
+"""Portefeuille multi-symboles sous guard propfirm (P11).
 
 Portefeuille : XAUUSD (S6 : V4 + sorties scalp 1R/2R/5R)
              + cluster forex validé (GBPUSD, EURUSD, GBPAUD, EURNZD — WS7.5, TIERED-5R)
+             + admises 2025 (USDCHF, GRXEUR)
+             + marginales positives toutes années (CADJPY, NZDUSD, EURJPY, XAGUSD)
 
-Les trades des 5 symboles sont fusionnés chronologiquement puis rejoués dans
-le PropFirmGuard (risque fixe, limites internes strictes) à trois niveaux de
-risque : 0.5%, 0.75%, 1%.
+Les trades de tous les symboles sont fusionnés chronologiquement puis rejoués
+dans le PropFirmGuard (risque fixe, limites internes strictes) à trois niveaux
+de risque : 0.5%, 0.75%, 1%.
 
-Résultats de référence (2024 + 2025, ~1.8 trades/jour tradé, WR ~64%) :
-  0.50% : +23.9% / +42.8% par an · DD max 3.25% · cible +10% en 33-147 j
-  0.75% : +35.8% / +64.1% par an · DD max 4.88% · cible +10% en 33-102 j  ← RETENU
-  1.00% : FAIL 2025 — le drawdown interne 6% est touché en janvier et le
-          compte est arrêté définitivement avant les mois gagnants.
+Résultats de référence P11 (2024 + 2025, ~2.2-2.3 trades/jour tradé) :
+  0.50% : +30.0% / +89.9% par an · DD ≤ 3.26% · cible +10% en 33-102 j
+  0.75% : +45.0% / +134.9% par an · DD ≤ 4.89% · cible +10% en 33-95 j  ← RETENU
+  1.00% : FAIL 2025 (portefeuille 5 symboles) — le drawdown interne 6% est
+          touché en janvier et le compte est arrêté définitivement.
+
+Caveats : USDCHF, GRXEUR et XAGUSD n'ont qu'une année de données (2025) ;
+CADJPY/NZDUSD/EURJPY sont sous le seuil WR 55% une année sur deux mais
+positives partout.  Validation paper trading obligatoire avant tout live.
 
 Usage
 -----
@@ -48,14 +54,16 @@ _STRAT_XAU = dict(
     use_session_filter=True, session_start_utc=7, session_end_utc=21,
     max_signals_per_day=10, min_wyckoff_score=5.9, min_wyckoff_score_short=8.5,
 )
-_STRAT_FX = dict(
-    risk_reward=1.25, min_zone_score=4.0, min_composite_score=4.0,
-    signal_cooldown=10, use_trend_filter=True, trend_slope_lookback=3,
-    use_price_above_ema=True, ema_atr_tolerance=0.5, use_session_filter=True,
-    session_start_utc=7, session_end_utc=17, max_signals_per_day=6,
-    min_sl_pips=5, pip_size=0.0001,
-    min_wyckoff_score=7.5, min_wyckoff_score_short=6.5,
-)
+def _strat_fx(pip_size: float) -> dict:
+    """Config forex WS7.5 gelée — pip_size varie selon la devise cotée."""
+    return dict(
+        risk_reward=1.25, min_zone_score=4.0, min_composite_score=4.0,
+        signal_cooldown=10, use_trend_filter=True, trend_slope_lookback=3,
+        use_price_above_ema=True, ema_atr_tolerance=0.5, use_session_filter=True,
+        session_start_utc=7, session_end_utc=17, max_signals_per_day=6,
+        min_sl_pips=5, pip_size=pip_size,
+        min_wyckoff_score=7.5, min_wyckoff_score_short=6.5,
+    )
 
 _EXITS_XAU = dict(use_be=True, tp1_r=1.0, tp1_size=0.5,
                   tp2_r=2.0, tp2_cumulative_pct=0.75,
@@ -65,13 +73,23 @@ _EXITS_FX  = dict(tp1_r=1.5, tp1_size=0.33,
                   tp2_r=5.0, tp2_cumulative_pct=0.70,
                   max_daily_losses=1, max_monthly_losses=4)
 
+# Portefeuille P11 — cluster validé + admises 2025 (USDCHF, GRXEUR) +
+# marginales positives sur toutes leurs années (CADJPY, NZDUSD, EURJPY, XAGUSD).
+# Comparaison P7 vs P11 (2024-2025) : P11 gagne plus avec un DD comparable ou
+# inférieur (2024 : +45.0% / DD 3.76% vs +35.8% / DD 4.88% à risque 0.75%).
 SYMBOLS = [
-    # (sym, folder, spread, q2u, wyckoff, strat, exits, rr, name_pattern)
-    ("XAUUSD", "xauusd", 0.30, 1.00, _WY_XAU, _STRAT_XAU, _EXITS_XAU, 5.0),
-    ("GBPUSD", "gbpusd", 0.0001, 1.00, _WY_FX, _STRAT_FX, _EXITS_FX, 10.0),
-    ("EURUSD", "eurusd", 0.0001, 1.00, _WY_FX, _STRAT_FX, _EXITS_FX, 10.0),
-    ("GBPAUD", "gbpaud", 0.0002, 1.52, _WY_FX, _STRAT_FX, _EXITS_FX, 10.0),
-    ("EURNZD", "eurnzd", 0.0002, 1.62, _WY_FX, _STRAT_FX, _EXITS_FX, 10.0),
+    # (sym, folder, spread quote, q2u quote/USD, wyckoff, strat, exits, rr)
+    ("XAUUSD", "xauusd", 0.30,    1.00,  _WY_XAU, _STRAT_XAU,        _EXITS_XAU, 5.0),
+    ("GBPUSD", "gbpusd", 0.0001,  1.00,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
+    ("EURUSD", "eurusd", 0.0001,  1.00,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
+    ("GBPAUD", "gbpaud", 0.0002,  1.52,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
+    ("EURNZD", "eurnzd", 0.0002,  1.62,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
+    ("USDCHF", "usdchf", 0.00012, 0.88,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
+    ("GRXEUR", "grxeur", 1.5,     0.92,  _WY_FX,  _strat_fx(1.0),    _EXITS_FX, 10.0),
+    ("CADJPY", "cadjpy", 0.018,   150.0, _WY_FX,  _strat_fx(0.01),   _EXITS_FX, 10.0),
+    ("NZDUSD", "nzdusd", 0.00012, 1.00,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
+    ("EURJPY", "eurjpy", 0.015,   150.0, _WY_FX,  _strat_fx(0.01),   _EXITS_FX, 10.0),
+    ("XAGUSD", "xagusd", 0.025,   1.00,  _WY_FX,  _strat_fx(0.01),   _EXITS_FX, 10.0),
 ]
 
 YEARS = [2024, 2025]
