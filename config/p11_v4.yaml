@@ -90,7 +90,7 @@ strategy_groups:
 
 # ── Les 11 symboles du portefeuille ──────────────────────────────────────────
 # enabled: false pour retirer une paire sans la supprimer.
-# broker_symbol : le nom EXACT chez ton broker s'il diffère (ex. GER40, XAUUSD.a).
+# broker_symbol : le nom EXACT chez ton broker s'il diffère (ex. DAX, XAUUSD.a).
 symbols:
   XAUUSD: {enabled: true, group: xau_v4,     pip_size: 0.01,   broker_symbol: XAUUSD}
   GBPUSD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: GBPUSD}
@@ -98,7 +98,7 @@ symbols:
   GBPAUD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: GBPAUD}
   EURNZD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: EURNZD}
   USDCHF: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: USDCHF}
-  GRXEUR: {enabled: true, group: forex_ws75, pip_size: 1.0,    broker_symbol: GER40}
+  GRXEUR: {enabled: true, group: forex_ws75, pip_size: 1.0,    broker_symbol: DAX}
   CADJPY: {enabled: true, group: forex_ws75, pip_size: 0.01,   broker_symbol: CADJPY}
   NZDUSD: {enabled: true, group: forex_ws75, pip_size: 0.0001, broker_symbol: NZDUSD}
   EURJPY: {enabled: true, group: forex_ws75, pip_size: 0.01,   broker_symbol: EURJPY}

@@ -9,7 +9,7 @@ WS7.5 (TIERED-5R), sous garde-fou propfirm strict.
 - **Windows** avec un terminal **MetaTrader 5** installé et connecté au broker
 - Python 3.11+ et `pip install MetaTrader5 pandas numpy pyyaml`
 - Les 11 symboles visibles dans le Market Watch MT5 (noms exacts → voir
-  `broker_symbol` dans le YAML, ex. `GER40` pour le DAX)
+  `broker_symbol` dans le YAML, ex. `DAX` pour le DAX)
 - Identifiants dans les variables d'environnement (jamais dans un fichier) :
   ```
   set ZEUS_MT5_LOGIN=12345678
@@ -39,7 +39,7 @@ Tout se règle dans le YAML, le code ne se touche pas :
 | Risque par trade | `risk.risk_per_trade_pct` | `0.006` (0.6% validé) |
 | Limites propfirm | `risk.max_daily_loss_pct` / `max_total_dd_pct` | `0.03` / `0.06` |
 | Activer/couper une paire | `symbols.<PAIRE>.enabled` | `false` |
-| Nom broker différent | `symbols.<PAIRE>.broker_symbol` | `GER40`, `XAUUSD.a` |
+| Nom broker différent | `symbols.<PAIRE>.broker_symbol` | `DAX`, `XAUUSD.a` |
 | RR / échelle de sorties | `strategy_groups.<groupe>.exits` | `runner_rr: 15.0` |
 | Seuils de signaux | `strategy_groups.<groupe>.signals` | `min_wyckoff_score_long` |
 | Heure de coupure | `risk.flat_hour_utc` | `21` |

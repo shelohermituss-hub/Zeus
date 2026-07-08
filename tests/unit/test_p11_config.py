@@ -48,7 +48,7 @@ class TestShippedConfig:
 
     def test_broker_symbol_mapping(self):
         cfg = load_p11_config(_REPO_YAML)
-        assert cfg.symbols["GRXEUR"].broker_symbol == "GER40"
+        assert cfg.symbols["GRXEUR"].broker_symbol == "DAX"
         assert cfg.symbols["XAUUSD"].broker_symbol == "XAUUSD"
 
     def test_default_mode_is_paper_not_live(self):

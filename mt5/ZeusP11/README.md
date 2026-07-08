@@ -22,7 +22,7 @@ Port MQL5 complet de la stratégie Zeus S&D/Wyckoff : XAUUSD en V4 production
 4. Dans MT5 : glisse `ZeusP11` sur un graphique (ex. XAUUSD M1),
    coche « Autoriser le trading algorithmique »
 5. Ajuste `InpSymbols` avec les noms EXACTS de ton broker
-   (ex. `GER40.cash`, `XAUUSD.a`)
+   (ex. `DAX`, `XAUUSD.a` — le nom exact varie selon le broker)
 
 ## ⚠️ Protocole de validation OBLIGATOIRE avant tout ordre réel
 
