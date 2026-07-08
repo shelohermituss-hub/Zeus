@@ -80,8 +80,13 @@ _EXITS_FX  = dict(tp1_r=1.5, tp1_size=0.33,
                   tp2_r=5.0, tp2_cumulative_pct=0.70,
                   max_daily_losses=1, max_monthly_losses=4)
 
-# Portefeuille P11 — cluster validé + admises 2025 (USDCHF, GRXEUR) +
-# marginales positives sur toutes leurs années (CADJPY, NZDUSD, EURJPY, XAGUSD).
+# Portefeuille P12 (ex-P11) — cluster validé + admises 2025 (USDCHF, GRXEUR) +
+# marginales positives sur toutes leurs années (CADJPY, NZDUSD, EURJPY, XAGUSD)
+# + UKXGBP (FTSE100, admis 2024+2025 complets : +40.35R, WR 67.1%, DD ≤2.0%
+#   — voir zeus/backtest/run_indices_2024_2025.py).
+# Rejetés sur le même protocole (2024+2025 complets) : AUXAUD, JPXJPY (négatifs
+# les 2 ans), FRXEUR/SPXUSD/NSXUSD/UDXUSD (edge réel mais irrégulier — 1 année
+# sur 2 sous le seuil WR 55%).
 # Comparaison P7 vs P11 (2024-2025) : P11 gagne plus avec un DD comparable ou
 # inférieur (2024 : +45.0% / DD 3.76% vs +35.8% / DD 4.88% à risque 0.75%).
 SYMBOLS = [
@@ -97,6 +102,7 @@ SYMBOLS = [
     ("NZDUSD", "nzdusd", 0.00012, 1.00,  _WY_FX,  _strat_fx(0.0001), _EXITS_FX, 10.0),
     ("EURJPY", "eurjpy", 0.015,   150.0, _WY_FX,  _strat_fx(0.01),   _EXITS_FX, 10.0),
     ("XAGUSD", "xagusd", 0.025,   1.00,  _WY_FX,  _strat_fx(0.01),   _EXITS_FX, 10.0),
+    ("UKXGBP", "ukxgbp", 1.5,     0.787, _WY_FX,  _strat_fx(1.0),    _EXITS_FX, 10.0),
 ]
 
 YEARS = [2024, 2025]
