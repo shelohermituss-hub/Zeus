@@ -140,6 +140,32 @@ ulong FindPositionTicket(const string sym)
    return 0;
   }
 
+// Profit RÉEL ($) d'une position entièrement fermée, lu depuis l'historique
+// des deals MT5 (somme de tous les deals de sortie : profit + swap + commission).
+// CRITIQUE : ne JAMAIS recalculer ce montant depuis pnl_r × risque théorique —
+// un dimensionnement de lot erroné pour un symbole rendrait le garde-fou
+// aveugle à une vraie perte bien supérieure à celle prévue (c'est exactement
+// ce qui a permis un drawdown de 17% en février alors que la limite est 6%).
+double ZeusPositionRealizedUSD(const ulong ticket)
+  {
+   if(!HistorySelectByPosition((long)ticket))
+      return 0.0;
+   double total = 0.0;
+   int n = HistoryDealsTotal();
+   for(int k = 0; k < n; k++)
+     {
+      ulong deal = HistoryDealGetTicket(k);
+      if(deal == 0) continue;
+      long entry = HistoryDealGetInteger(deal, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY)
+         continue;                              // ignorer le deal d'ouverture
+      total += HistoryDealGetDouble(deal, DEAL_PROFIT)
+             + HistoryDealGetDouble(deal, DEAL_SWAP)
+             + HistoryDealGetDouble(deal, DEAL_COMMISSION);
+     }
+   return total;
+  }
+
 // ═════════════════════════ INIT ═════════════════════════════════════
 int OnInit()
   {
@@ -465,7 +491,17 @@ void OnTradeFinished(const int i, const datetime bar_time,
                      const double pnl_r, const string reason)
   {
    datetime ts_utc  = ToUTC(bar_time);
-   double   pnl_usd = pnl_r * ZeusGuardRiskUSD(g_guard, g_guard_cfg);
+
+   // Montant RÉEL lu dans l'historique MT5 (jamais recalculé depuis pnl_r) :
+   // le garde-fou doit voir la vraie perte/gain, pas une estimation théorique
+   // qui serait aveugle à un mauvais dimensionnement de lot.
+   double pnl_usd = ZeusPositionRealizedUSD(g_trades[i].ticket);
+   double pnl_theoretical = pnl_r * ZeusGuardRiskUSD(g_guard, g_guard_cfg);
+   if(MathAbs(pnl_usd - pnl_theoretical) > MathAbs(pnl_theoretical) * 0.5 + 10.0)
+      PrintFormat("ZeusP11 %s: ⚠ ÉCART SUSPECT réel=%.2f$ vs théorique=%.2f$ "
+                  "(pnl_r=%.2f) — vérifier le dimensionnement du lot pour ce symbole",
+                  g_symbols[i], pnl_usd, pnl_theoretical, pnl_r);
+
    ZeusGuardOnTradeClosed(g_guard, g_guard_cfg, ts_utc, pnl_usd);
 
    if(pnl_r < 0)
