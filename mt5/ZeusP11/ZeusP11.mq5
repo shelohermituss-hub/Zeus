@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                                     ZeusP11.mq5  |
-//|  Expert Advisor — portefeuille propfirm P11-V4  (audit v2)       |
+//|  Expert Advisor — portefeuille propfirm P11-V4  (audit v3)       |
 //|                                                                  |
 //|  Port MQL5 de la stratégie Zeus S&D/Wyckoff validée :            |
 //|    - XAUUSD  : V4 production (WS 5.9/8.5, 4T Runner@20R)         |
@@ -12,11 +12,22 @@
 //|  de InpSymbols via timer.  Le M15 est resamplé depuis les M1     |
 //|  (jamais CopyRates M15) pour une parité exacte avec le Python.   |
 //|                                                                  |
+//|  Corrections audit v3 (voir Include/*.mqh et ce fichier) :       |
+//|    - fermetures partielles/finales vérifiées (plus de comptage   |
+//|      optimiste si le broker rejette un ordre) ;                 |
+//|    - garde-fou alimenté par le PROFIT RÉEL (historique MT5),     |
+//|      jamais par une estimation théorique R × risque fixe ;       |
+//|    - dimensionnement par tick_value CÔTÉ PERTE + garde-fou a     |
+//|      priori sur le pire cas ;                                   |
+//|    - décalage UTC recalculé à chaque appel (suit les             |
+//|      changements d'heure d'été/hiver sur un test long) ;         |
+//|    - rattrapage de barres manquées signalé explicitement.        |
+//|                                                                  |
 //|  AVANT TOUT TRADING RÉEL : harnais d'équivalence (100%) puis     |
 //|  démo — voir README.md.                                          |
 //+------------------------------------------------------------------+
 #property copyright "Zeus"
-#property version   "2.00"
+#property version   "3.00"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -101,15 +112,36 @@ double PipForSymbol(const string sym)
    return 0.0001;
   }
 
-datetime ToUTC(const datetime server_time)
+// Décalage serveur→UTC recalculé À CHAQUE APPEL (pas mis en cache) : sur un
+// backtest de plusieurs mois, un décalage figé au démarrage devient FAUX dès
+// que le serveur bascule heure d'été/hiver — TimeGMT() suit les règles DST
+// réelles du serveur au fil du temps simulé, contrairement à une valeur gelée.
+int CurrentUTCOffsetSec()
   {
-   return server_time - g_utc_offset_sec;
+   if(InpServerUTCOffsetH != -99)
+      return InpServerUTCOffsetH * 3600;
+   return (int)(TimeCurrent() - TimeGMT());
   }
 
+datetime ToUTC(const datetime server_time)
+  {
+   return server_time - CurrentUTCOffsetSec();
+  }
+
+// Dimensionnement par risque réel : utilise la valeur de tick CÔTÉ PERTE
+// (SYMBOL_TRADE_TICK_VALUE_LOSS), pas la valeur générique qui peut différer
+// selon la conversion de devise pour les paires croisées / CFD.
+// Un GARDE-FOU a priori vérifie ensuite que le pire cas (perte au SL) ne
+// dépasse pas le risque visé au-delà d'une tolérance d'arrondi — ceci est
+// indépendant de toute cause (tick_value erroné, contract_size broker
+// inhabituel, etc.) et empêche tout trade dont le risque réel serait
+// démesuré par rapport à InpRiskPerTradePct.
 double LotsForRisk(const string sym, const double sl_dist, const double risk_usd)
   {
    double tick_size  = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
-   double tick_value = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   double tick_value = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE_LOSS);
+   if(tick_value <= 0)
+      tick_value = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);   // repli
    if(tick_size <= 0 || tick_value <= 0)
       return 0.0;
    double loss_per_lot = (sl_dist / tick_size) * tick_value;
@@ -123,6 +155,19 @@ double LotsForRisk(const string sym, const double sl_dist, const double risk_usd
       lots = MathFloor(lots / step) * step;   // floor : jamais > risque cible
    if(lots < vmin)
       return 0.0;                             // risque min > cible → refus
+
+   // Garde-fou a priori : le pire cas réel (lot arrondi au minimum broker)
+   // ne doit pas dépasser ~1.5× le risque visé (marge pour l'arrondi au pas
+   // de volume minimum, qui peut légèrement gonfler le risque réel).
+   double worst_case_loss = vmin * loss_per_lot;
+   if(worst_case_loss > risk_usd * 1.5)
+     {
+      PrintFormat("ZeusP11 %s: REFUS — même au lot minimum (%.4f), la perte "
+                  "au SL (%.2f$) dépasse largement le risque visé (%.2f$). "
+                  "Vérifier tick_value/contract_size de ce symbole chez le broker.",
+                  sym, vmin, worst_case_loss, risk_usd);
+      return 0.0;
+     }
    return MathMin(vmax, lots);
   }
 
@@ -169,10 +214,9 @@ double ZeusPositionRealizedUSD(const ulong ticket)
 // ═════════════════════════ INIT ═════════════════════════════════════
 int OnInit()
   {
-   if(InpServerUTCOffsetH == -99)
-      g_utc_offset_sec = (int)(TimeCurrent() - TimeGMT());
-   else
-      g_utc_offset_sec = InpServerUTCOffsetH * 3600;
+   g_utc_offset_sec = CurrentUTCOffsetSec();   // valeur d'affichage seulement —
+                                                // la logique utilise CurrentUTCOffsetSec()
+                                                // recalculé à chaque appel (suit le DST)
 
    ZeusGuardDefaults(g_guard_cfg);
    g_guard_cfg.max_daily_loss_pct = InpMaxDailyLossPct;
@@ -342,6 +386,18 @@ void ProcessSymbol(const int i)
 
    bool first_run = (g_sig_state[i].last_m1_processed == 0);
 
+   // Transparence : un rattrapage de plusieurs barres (coupure réseau,
+   // terminal fermé, VPS redémarré...) met à jour l'état des zones pour
+   // CHAQUE barre manquée, mais la détection de signal ne s'exécute que
+   // sur la DERNIÈRE barre du rattrapage — un signal qui serait apparu sur
+   // une barre intermédiaire du trou est donc silencieusement perdu (échec
+   // sûr : aucun trade erroné, juste une opportunité manquée). On le
+   // signale explicitement pour que ce ne soit jamais invisible.
+   if(!first_run && (n1 - first_new) > 1)
+      PrintFormat("ZeusP11 %s: rattrapage de %d barres M1 — un signal éventuel "
+                  "sur une barre intermédiaire du trou n'a pas pu être détecté",
+                  sym, n1 - first_new);
+
    for(int b = first_new; b < n1; b++)
      {
       // 1. Sorties du trade ouvert sur CETTE barre
@@ -390,7 +446,7 @@ void ProcessSymbol(const int i)
                                         m1_close, n1,
                                         t15, c15a, h15, l15, n15,
                                         g_sig_params[i], g_wy_params[i],
-                                        g_utc_offset_sec, sig);
+                                        CurrentUTCOffsetSec(), sig);
    if(!has_sig)
       return;
 
