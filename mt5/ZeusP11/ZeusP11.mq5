@@ -36,9 +36,9 @@ input int    InpMaxLossesPerDay    = 3;         // Stop après N pertes/jour
 input int    InpFlatHourUTC        = 21;        // Aucune entrée après (UTC)
 
 input group "── Symboles ──"
-input string InpSymbols            = "XAUUSD,GBPUSD,EURUSD,GBPAUD,EURNZD,USDCHF,DAX,CADJPY,NZDUSD,EURJPY,XAGUSD";
+input string InpSymbols            = "XAUUSD,GBPUSD,EURUSD,GBPAUD,EURNZD,USDCHF,CADJPY,NZDUSD,EURJPY,XAGUSD"; // DAX retiré temporairement (nom broker à confirmer)
 input string InpXauSymbol          = "XAUUSD";  // Symbole traité en config V4 or
-input string InpPipOverrides       = "DAX=1.0;XAGUSD=0.01"; // pip par symbole (défaut: JPY=0.01, autres=0.0001)
+input string InpPipOverrides       = "XAGUSD=0.01"; // pip par symbole (défaut: JPY=0.01, autres=0.0001)
 
 input group "── Seuils de signaux (défauts = valeurs validées) ──"
 input double InpXauWSLong          = 5.9;       // Or : score Wyckoff min (longs)
