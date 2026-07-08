@@ -153,6 +153,7 @@ class EngulfingTradeResult:
     outcome:     str    # "win" | "loss" | "scratch" | "timeout"
     pnl_usd:     float
     bars_held:   int
+    exit_reason: str = "sl"   # "sl" | "tp" | "rsi_cross" | "duration"
 
 
 def simulate_engulfing_rsi(
@@ -210,14 +211,14 @@ def simulate_engulfing_rsi(
                 pnl_usd = -(sl_points * point_size) * lot * contract_size
                 results.append(EngulfingTradeResult(
                     sig.direction, entry_bar, bar_idx, entry, sl, "loss",
-                    pnl_usd, bar_idx - entry_bar,
+                    pnl_usd, bar_idx - entry_bar, exit_reason="sl",
                 ))
                 break
             if tp_hit:
                 pnl_usd = (tp_points * point_size) * lot * contract_size
                 results.append(EngulfingTradeResult(
                     sig.direction, entry_bar, bar_idx, entry, tp, "win",
-                    pnl_usd, bar_idx - entry_bar,
+                    pnl_usd, bar_idx - entry_bar, exit_reason="tp",
                 ))
                 break
 
@@ -235,7 +236,7 @@ def simulate_engulfing_rsi(
                     outcome = "win" if pnl_usd > 0 else ("loss" if pnl_usd < 0 else "scratch")
                     results.append(EngulfingTradeResult(
                         sig.direction, entry_bar, bar_idx, entry, exit_px, outcome,
-                        pnl_usd, bar_idx - entry_bar,
+                        pnl_usd, bar_idx - entry_bar, exit_reason="rsi_cross",
                     ))
                     break
 
@@ -246,7 +247,7 @@ def simulate_engulfing_rsi(
                 outcome = "win" if pnl_usd > 0 else ("loss" if pnl_usd < 0 else "scratch")
                 results.append(EngulfingTradeResult(
                     sig.direction, entry_bar, bar_idx, entry, exit_px, outcome,
-                    pnl_usd, bar_idx - entry_bar,
+                    pnl_usd, bar_idx - entry_bar, exit_reason="duration",
                 ))
                 break
         # sinon : expire en fin de données, exclu (comme sd_simulation)
