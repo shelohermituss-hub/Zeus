@@ -85,6 +85,31 @@ class TestExitsXauV4:
         # Le compteur de pertes par symbole/direction est incrémenté
         assert st.day_losses["2026-06-01|long"] == 1
 
+    def test_reversal_after_tp2_locks_tp1_level_not_be(self):
+        e = _mk_engine()
+        st = _open_long(e)                       # 1R = 10 pts, entry 3000, SL 2990
+        # Touche TP2 (3030) puis retombe sur l'ancien niveau BE (3000) SANS
+        # toucher le nouveau SL ratcheté (3010 = niveau TP1) : le trade doit
+        # rester ouvert, protégé par le SL remonté à TP1, pas au BE.
+        e._manage_exits("XAUUSD", st, _bar(high=3030.5, low=3025),
+                        pd.Timestamp("2026-06-01 12:00"))        # TP1 + TP2
+        tr = st.open_trade
+        assert tr is not None and tr.tp2_done
+        assert tr.sl == pytest.approx(3010.0)     # niveau TP1, pas 3000 (BE)
+
+        e._manage_exits("XAUUSD", st, _bar(high=3015, low=3010.5),
+                        pd.Timestamp("2026-06-01 12:30"))         # redescend, SL (3010) pas touché
+        assert st.open_trade is not None          # toujours ouvert
+
+        e._manage_exits("XAUUSD", st, _bar(high=3011, low=3009),
+                        pd.Timestamp("2026-06-01 13:00"))         # touche le SL ratcheté (3010)
+        assert st.open_trade is None
+        trade = e.closed_trades[-1]
+        # 60%@3R + 40%@1R (reliquat sorti au niveau TP1) = 1.8 + 0.4 = 2.2R
+        # (avant le correctif : le reliquat sortait au BE → 1.8 + 0.0 = 1.8R)
+        assert trade["pnl_r"] == pytest.approx(2.2, abs=1e-6)
+        assert trade["outcome"] == "win"
+
     def test_be_after_tp1_is_scratch(self):
         e = _mk_engine()
         st = _open_long(e)

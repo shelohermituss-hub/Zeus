@@ -187,16 +187,13 @@ bool ZeusManageExits(CTrade &trade, const string symbol,
          t.realized_r    += closed * e.tp2_r;
          t.remaining_frac -= closed;
         }
-      // NB (audit) : zeus/live/p11_engine.py::_manage_exits ne remonte PAS le
-      // SL après TP2/TP3 (reste au BE fixé à TP1) — voir tr.sl à la ligne 280
-      // de ce fichier, jamais réassigné ensuite. C'est la RÉFÉRENCE déclarée
-      // de ce port (voir en-tête de fichier) ; le comportement ci-dessous
-      // matche donc le moteur live à l'identique. zeus/backtest/sd_simulation.py
-      // (utilisé pour valider les performances du portefeuille), lui, FAIT
-      // remonter active_sl à tp1 puis tp2 après chaque palier — les deux
-      // moteurs Python divergent entre eux sur ce point précis, en amont de
-      // tout port MQL5. Ne pas "corriger" ce fichier pour matcher le backtest
-      // sans d'abord trancher lequel des deux moteurs Python est la vérité.
+      // Le reliquat (runner) verrouille le gain du palier TP1 au lieu de
+      // rester au BE — aligné sur zeus/live/p11_engine.py (audit : les deux
+      // moteurs Python divergeaient sur ce point, p11_engine.py a été corrigé
+      // pour matcher zeus/backtest/sd_simulation.py, la référence de
+      // validation des performances du portefeuille).
+      t.sl = ZeusTradeLevel(t, e.tp1_r);
+      trade.PositionModify(t.ticket, t.sl, 0.0);
      }
 
    if(e.tp3_r > 0 && !t.tp3_done && ZE_HIT(ZeusTradeLevel(t, e.tp3_r)))
@@ -208,6 +205,9 @@ bool ZeusManageExits(CTrade &trade, const string symbol,
          t.realized_r    += closed * e.tp3_r;
          t.remaining_frac -= closed;
         }
+      // Idem : après TP3, le reliquat verrouille le gain du palier TP2.
+      t.sl = ZeusTradeLevel(t, e.tp2_r);
+      trade.PositionModify(t.ticket, t.sl, 0.0);
      }
 
    if(ZE_HIT(ZeusTradeLevel(t, e.runner_rr)))

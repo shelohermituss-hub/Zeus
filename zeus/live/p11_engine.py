@@ -290,6 +290,11 @@ class P11Engine:
             if closed > 0:
                 self.router.partial_close(st.cfg.broker_symbol, tr.ticket,
                                           tr.direction, tr.lots * closed)
+            # Le reliquat (runner) verrouille le gain du palier TP1 au lieu de
+            # rester au BE — aligné sur zeus/backtest/sd_simulation.py, la
+            # référence utilisée pour valider les performances du portefeuille.
+            tr.sl = tr.level(ex.tp1_r)
+            self.router.modify_sl(st.cfg.broker_symbol, tr.ticket, tr.sl)
             logger.info("TP2", symbol=name, closed_pct=closed)
 
         if ex.tp3_r > 0 and not tr.tp3_done and hit(tr.level(ex.tp3_r)):
@@ -301,6 +306,9 @@ class P11Engine:
             if closed > 0:
                 self.router.partial_close(st.cfg.broker_symbol, tr.ticket,
                                           tr.direction, tr.lots * closed)
+            # Idem : le reliquat verrouille le gain du palier TP2 après TP3.
+            tr.sl = tr.level(ex.tp2_r)
+            self.router.modify_sl(st.cfg.broker_symbol, tr.ticket, tr.sl)
             logger.info("TP3", symbol=name, closed_pct=closed)
 
         if hit(tr.level(ex.runner_rr)):
