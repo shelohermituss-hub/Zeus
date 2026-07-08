@@ -11,6 +11,7 @@ Port MQL5 complet de la stratégie Zeus S&D/Wyckoff : XAUUSD en V4 production
    ```
    MQL5\Experts\ZeusP11\ZeusP11.mq5
    MQL5\Experts\ZeusP11\ExportBars.mq5
+   MQL5\Experts\ZeusP11\SymbolSpecs.mq5
    MQL5\Experts\ZeusP11\Include\ZeusPivot.mqh
    MQL5\Experts\ZeusP11\Include\ZeusZones.mqh
    MQL5\Experts\ZeusP11\Include\ZeusWyckoff.mqh
@@ -27,7 +28,23 @@ Port MQL5 complet de la stratégie Zeus S&D/Wyckoff : XAUUSD en V4 production
 ## ⚠️ Protocole de validation OBLIGATOIRE avant tout ordre réel
 
 Un port de 2 300 lignes de logique critique ne se croit pas sur parole —
-il se prouve. Trois étapes, dans l'ordre :
+il se prouve. Quatre étapes, dans l'ordre :
+
+**0. Spécifications broker (une fois, avant tout backtest)**
+   - Glisse `SymbolSpecs.mq5` sur un graphique quelconque
+     → journal Experts + `MQL5\Files\SymbolSpecs.csv`
+   - Vérifie pour CHAQUE symbole de `InpSymbols` : `contract_size`,
+     `tick_size`, `tick_value_loss`, `currency_profit`, `spread_points`,
+     `swap_long/short`. Un `tick_value_loss` incohérent avec
+     `contract_size × tick_size` a déjà causé un sizing de lot 10x trop
+     gros sur XAUUSD/XAGUSD chez un broker — `LotsForRisk()` corrige ce
+     cas quand `currency_profit == devise du compte`, mais toute anomalie
+     signalée dans le journal (`tick_value_loss incohérent...`) mérite
+     vérification manuelle avant de continuer.
+   - Compare le spread réel à celui supposé par le backtest Python
+     (`zeus/backtest/run_multi_symbol_propfirm.py`, colonne `spread quote`
+     de `SYMBOLS`) — un écart important dégradera la performance réelle
+     même avec une logique de signal identique.
 
 **1. Équivalence des signaux (harnais)**
    - Glisse `ExportBars.mq5` sur le graphique de chaque symbole
