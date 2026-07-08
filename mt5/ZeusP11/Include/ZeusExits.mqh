@@ -187,6 +187,16 @@ bool ZeusManageExits(CTrade &trade, const string symbol,
          t.realized_r    += closed * e.tp2_r;
          t.remaining_frac -= closed;
         }
+      // NB (audit) : zeus/live/p11_engine.py::_manage_exits ne remonte PAS le
+      // SL après TP2/TP3 (reste au BE fixé à TP1) — voir tr.sl à la ligne 280
+      // de ce fichier, jamais réassigné ensuite. C'est la RÉFÉRENCE déclarée
+      // de ce port (voir en-tête de fichier) ; le comportement ci-dessous
+      // matche donc le moteur live à l'identique. zeus/backtest/sd_simulation.py
+      // (utilisé pour valider les performances du portefeuille), lui, FAIT
+      // remonter active_sl à tp1 puis tp2 après chaque palier — les deux
+      // moteurs Python divergent entre eux sur ce point précis, en amont de
+      // tout port MQL5. Ne pas "corriger" ce fichier pour matcher le backtest
+      // sans d'abord trancher lequel des deux moteurs Python est la vérité.
      }
 
    if(e.tp3_r > 0 && !t.tp3_done && ZE_HIT(ZeusTradeLevel(t, e.tp3_r)))

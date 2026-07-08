@@ -499,7 +499,20 @@ void ProcessSymbol(const int i)
 
    // ── Filtres d'entrée (moteur Python) ──────────────────────────────
    if(!InpTradingEnabled)                        return;
-   if(g_trades[i].active)                        return;
+   if(g_trades[i].active)
+     {
+      // DIVERGENCE CONNUE vs Python : simulate_all() ne vérifie jamais si un
+      // trade est déjà ouvert sur ce symbole — chaque signal est rejoué
+      // indépendamment, y compris en parallèle d'un trade encore actif. L'EA
+      // (comme tout compte réel) ne peut tenir qu'UNE position par symbole ;
+      // ce signal est donc refusé. Les performances validées par le backtest
+      // Python supposent une capacité que ni l'EA ni un compte réel n'ont —
+      // ce refus doit rester visible, pas silencieux, pour objectiver l'écart.
+      PrintFormat("ZeusP11 %s: signal %s ignoré — position déjà ouverte sur ce "
+                  "symbole (divergence connue vs backtest Python, voir audit)",
+                  sym, (sig.direction > 0 ? "long" : "short"));
+      return;
+     }
 
    int dir_idx = (sig.direction > 0) ? 0 : 1;
    MqlDateTime dt;  TimeToStruct(ts_utc, dt);
