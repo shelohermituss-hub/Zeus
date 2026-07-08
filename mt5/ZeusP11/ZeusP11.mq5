@@ -21,7 +21,11 @@
 //|      priori sur le pire cas ;                                   |
 //|    - décalage UTC recalculé à chaque appel (suit les             |
 //|      changements d'heure d'été/hiver sur un test long) ;         |
-//|    - rattrapage de barres manquées signalé explicitement.        |
+//|    - rattrapage de barres manquées signalé explicitement ;       |
+//|    - lots métaux (XAUUSD/XAGUSD) : tick_value_loss du Testeur    |
+//|      constaté ~10x trop faible chez ce broker → cross-vérifié et |
+//|      corrigé via contract_size quand devise profit = devise du   |
+//|      compte (aucune conversion requise dans ce cas).             |
 //|                                                                  |
 //|  AVANT TOUT TRADING RÉEL : harnais d'équivalence (100%) puis     |
 //|  démo — voir README.md.                                          |
@@ -147,6 +151,31 @@ double LotsForRisk(const string sym, const double sl_dist, const double risk_usd
    double loss_per_lot = (sl_dist / tick_size) * tick_value;
    if(loss_per_lot <= 0)
       return 0.0;
+
+   // Garde-fou anti-tick_value corrompu (bug constaté chez certains brokers :
+   // le Testeur de Stratégie renvoie un SYMBOL_TRADE_TICK_VALUE_LOSS ~10x trop
+   // faible pour les métaux, XAUUSD/XAGUSD notamment, alors que la formule
+   // tick_size/tick_value reste nécessaire pour les paires croisées où une
+   // conversion de devise est requise). Quand la devise de profit du symbole
+   // est la devise du compte, aucune conversion n'entre en jeu : le calcul
+   // direct sl_dist × contract_size est alors sans ambiguïté et sert de
+   // référence pour détecter/corriger un tick_value aberrant.
+   if(SymbolInfoString(sym, SYMBOL_CURRENCY_PROFIT) == AccountInfoString(ACCOUNT_CURRENCY))
+     {
+      double contract_size = SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE);
+      if(contract_size > 0)
+        {
+         double loss_per_lot_direct = sl_dist * contract_size;
+         if(loss_per_lot_direct > 0
+            && MathAbs(loss_per_lot - loss_per_lot_direct) > loss_per_lot_direct * 0.05)
+           {
+            PrintFormat("ZeusP11 %s: tick_value_loss incohérent (perte/lot=%.2f$ vs "
+                        "%.2f$ attendu via contract_size=%.2f) — calcul direct utilisé",
+                        sym, loss_per_lot, loss_per_lot_direct, contract_size);
+            loss_per_lot = loss_per_lot_direct;
+           }
+        }
+     }
    double lots = risk_usd / loss_per_lot;
    double step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
    double vmin = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
