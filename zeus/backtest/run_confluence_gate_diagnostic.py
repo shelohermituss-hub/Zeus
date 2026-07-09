@@ -34,10 +34,13 @@ def main() -> None:
     df_ltf = resample_ticks(ticks, freq="1s")["2026-02-02":"2026-02-13"]
     print(f"Échantillon : {len(df_ltf):,} barres 1s\n")
 
+    # df_mtf_15m intentionally None: the 1H/15M MSS gate is always in
+    # pullback when we want to enter, producing 0 setups regardless of
+    # every other gate (documented in run_scalp_backtest.py).
     strat = ConfluenceScalpStrategy(
-        df_htf_1h=df_1h, df_mtf_15m=df_15m, df_daily=df_1d,
+        df_htf_1h=df_1h, df_mtf_15m=None, df_daily=df_1d,
         sl_pips=20.0, max_sl_pips=30.0, pip_value=1.0,
-        min_htf_score=6.0, min_grade=PatternGrade.C,
+        min_htf_score=3.0, min_grade=PatternGrade.C,
     )
     for attr in ("require_weekly_bias", "require_asian_sweep", "require_session_sweep",
                  "require_choch_candle", "require_pd_filter", "require_entry_pattern",
