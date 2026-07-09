@@ -189,6 +189,7 @@ def score_confluence(
     fib_50_tolerance_pct: float = 0.003,
     sweep_lookback:       int   = 10,
     sweep_zone_tol_pct:   float = 0.0,
+    zone_tolerance_pct:   float = 0.0,
 ) -> ConfluenceScore:
     """
     Evaluate all 10 confluence factors for one direction at one bar.
@@ -206,6 +207,14 @@ def score_confluence(
         sweep_zone_tol_pct:   ±% tolerance for sweep-vs-zone-edge alignment
                               (factor 4 intra-zone confirmation). 0.0 disables
                               the zone check (backward-compatible default).
+        zone_tolerance_pct:   ±% band expanding OB (factor 3) / FVG (factor 5)
+                              boundaries. Callers that already located this
+                              zone via a tolerance-expanded membership test
+                              (e.g. MTFSMCStrategy._in_htf_zone) must pass the
+                              same tolerance here, or a price accepted as
+                              "inside the zone" upstream can fail factors 3/5
+                              purely from a boundary-precision mismatch. 0.0
+                              keeps the original strict-boundary behavior.
 
     Returns:
         ConfluenceScore with 10 FactorResult entries.
@@ -213,9 +222,9 @@ def score_confluence(
     factors = [
         _f1_market_structure(result, direction),
         _f2_fibonacci_ote(result, price, bar_index, direction),
-        _f3_order_block(result, price, bar_index, direction),
+        _f3_order_block(result, price, bar_index, direction, zone_tolerance_pct),
         _f4_liquidity_sweep(result, bar_index, direction, sweep_lookback, sweep_zone_tol_pct),
-        _f5_fvg(result, price, bar_index, direction),
+        _f5_fvg(result, price, bar_index, direction, zone_tolerance_pct),
         _f6_poc(result, price, poc_tolerance_pct),
         _f7_killzone(timestamp),
         _f8_entry_model(result, direction),
@@ -302,6 +311,7 @@ def _f2_fibonacci_ote(
 
 def _f3_order_block(
     result: SMCResult, price: float, bar_index: int, direction: int,
+    zone_tolerance_pct: float = 0.0,
 ) -> FactorResult:
     """Factor 3 — price is inside an active order block of the correct direction."""
     all_obs = (
@@ -309,7 +319,11 @@ def _f3_order_block(
         + get_active_order_blocks(result.swing_obs, bar_index)
     )
     for ob in all_obs:
-        if ob.direction == direction and ob.low <= price <= ob.high:
+        if ob.direction != direction:
+            continue
+        lo = ob.low * (1 - zone_tolerance_pct)
+        hi = ob.high * (1 + zone_tolerance_pct)
+        if lo <= price <= hi:
             return FactorResult(
                 3, "Order Block", True,
                 f"inside OB [{ob.low:.2f}, {ob.high:.2f}]",
@@ -394,10 +408,15 @@ def _nearest_zone_edge(result: SMCResult, bar_index: int, direction: int) -> flo
 
 def _f5_fvg(
     result: SMCResult, price: float, bar_index: int, direction: int,
+    zone_tolerance_pct: float = 0.0,
 ) -> FactorResult:
     """Factor 5 — price is inside an active fair-value gap (imbalance zone)."""
     for fvg in get_active_fvgs(result.fvgs, bar_index):
-        if fvg.direction == direction and fvg.bottom <= price <= fvg.top:
+        if fvg.direction != direction:
+            continue
+        lo = fvg.bottom * (1 - zone_tolerance_pct)
+        hi = fvg.top * (1 + zone_tolerance_pct)
+        if lo <= price <= hi:
             return FactorResult(
                 5, "FVG / Imbalance", True,
                 f"inside FVG [{fvg.bottom:.2f}, {fvg.top:.2f}]",

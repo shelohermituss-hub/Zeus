@@ -366,6 +366,7 @@ class MTFSMCStrategy(Strategy):
             min_score=self._min_htf_score,
             timestamp=ltf_ts,
             sweep_zone_tol_pct=self._sweep_zone_tol_pct,
+            zone_tolerance_pct=self._zone_tol,
             require_entry_gate=self._require_htf_internal_align,
         )
         if cs is None:
