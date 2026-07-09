@@ -1,0 +1,102 @@
+{
+  "meta": {
+    "symbol": "XAUUSD",
+    "strategy": "ConfluenceScalpStrategy",
+    "sl_pips": 20.0,
+    "max_sl_pips": 30.0,
+    "periods": [
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06"
+    ]
+  },
+  "results": {
+    "2026-01": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "2026-02": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "2026-03": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "2026-04": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "2026-05": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "2026-06": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    }
+  }
+}
