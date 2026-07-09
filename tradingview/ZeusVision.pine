@@ -48,15 +48,15 @@ InpSupplyLabelColor   = input.color(color.maroon, "Couleur texte OFFRE", group =
 InpMitigatedColor     = input.color(color.new(color.gray, 88), "Couleur zone mitigée", group = grp_zone)
 
 grp_par = "Paramètres de détection (défauts = valeurs production)"
-InpSwingLookback      = input.int(5, "Swing lookback", group = grp_par)
-InpBosLookback        = input.int(20, "BOS lookback (recherche du niveau à casser)", group = grp_par)
-InpBosMaxBarsDemand   = input.int(40, "BOS max bars (demande)", group = grp_par)
-InpBosMaxBarsSupply   = input.int(80, "BOS max bars (offre)", group = grp_par)
-InpMaxBaseCandles     = input.int(10, "Bougies de base max", group = grp_par)
+InpSwingLookback      = input.int(5, "Swing lookback", minval = 1, group = grp_par)
+InpBosLookback        = input.int(20, "BOS lookback (recherche du niveau à casser)", minval = 1, group = grp_par)
+InpBosMaxBarsDemand   = input.int(40, "BOS max bars (demande)", minval = 1, group = grp_par)
+InpBosMaxBarsSupply   = input.int(80, "BOS max bars (offre)", minval = 1, group = grp_par)
+InpMaxBaseCandles     = input.int(10, "Bougies de base max", minval = 1, group = grp_par)
 InpMinPivotScore      = input.float(4.0, "Score pivot minimum", group = grp_par)
 InpMinZoneScoreDetect = input.float(4.0, "Score zone minimum (détection)", group = grp_par)
-InpAtrPeriod          = input.int(14, "Période ATR", group = grp_par)
-InpSweepLookback      = input.int(20, "Lookback sweep (score)", group = grp_par)
+InpAtrPeriod          = input.int(14, "Période ATR", minval = 1, group = grp_par)
+InpSweepLookback      = input.int(20, "Lookback sweep (score)", minval = 3, group = grp_par)
 
 // ── Types ─────────────────────────────────────────────────────────
 type SDZone
@@ -315,44 +315,48 @@ f_detectZones(t, o, h, l, c, n) =>
                                  sFresh = sFresh, sSweep = sSweep,
                                  isMitigated = false, touchCount = 0)
                             dup = false
-                            for zi = 0 to array.size(result) - 1
-                                ez = array.get(result, zi)
-                                if ez.side == newZone.side
-                                    dist = math.abs((ez.zoneTop + ez.zoneBottom) / 2.0 - (newZone.zoneTop + newZone.zoneBottom) / 2.0)
-                                    refH = math.min(ez.zoneTop - ez.zoneBottom, newZone.zoneTop - newZone.zoneBottom)
-                                    if refH >= 1e-8 and dist < refH * 0.5
-                                        dup := true
+                            if array.size(result) > 0
+                                for zi = 0 to array.size(result) - 1
+                                    ez = array.get(result, zi)
+                                    if ez.side == newZone.side
+                                        dist = math.abs((ez.zoneTop + ez.zoneBottom) / 2.0 - (newZone.zoneTop + newZone.zoneBottom) / 2.0)
+                                        refH = math.min(ez.zoneTop - ez.zoneBottom, newZone.zoneTop - newZone.zoneBottom)
+                                        if refH >= 1e-8 and dist < refH * 0.5
+                                            dup := true
                             if not dup
                                 array.push(result, newZone)
     result
 
 // Fusionne les zones fraîches dans l'état persistant (port de ZeusMergeZones)
 f_mergeZones(persistZones, freshZones) =>
-    for fi = 0 to array.size(freshZones) - 1
-        fz = array.get(freshZones, fi)
-        known = false
-        for zi = 0 to array.size(persistZones) - 1
-            ez = array.get(persistZones, zi)
-            if ez.formedAt == fz.formedAt and ez.side == fz.side and math.abs(ez.zoneBottom - fz.zoneBottom) < 1e-9
-                known := true
-        if not known
-            array.push(persistZones, fz)
+    if array.size(freshZones) > 0
+        for fi = 0 to array.size(freshZones) - 1
+            fz = array.get(freshZones, fi)
+            known = false
+            if array.size(persistZones) > 0
+                for zi = 0 to array.size(persistZones) - 1
+                    ez = array.get(persistZones, zi)
+                    if ez.formedAt == fz.formedAt and ez.side == fz.side and math.abs(ez.zoneBottom - fz.zoneBottom) < 1e-9
+                        known := true
+            if not known
+                array.push(persistZones, fz)
 
 // Met à jour touches/mitigation sur une nouvelle barre HTF close
 // (port de ZeusUpdateZonesOnBar).
 f_updateZonesOnBar(persistZones, barLow, barHigh, barClose, barTime) =>
-    for zi = 0 to array.size(persistZones) - 1
-        z = array.get(persistZones, zi)
-        if not z.isMitigated and barTime > z.formedAt
-            inZone = barLow <= z.zoneTop and barHigh >= z.zoneBottom
-            if inZone
-                z.touchCount := z.touchCount + 1
-                closedThrough = z.side == "demand" ? barClose < z.wickExtreme : barClose > z.wickExtreme
-                if closedThrough
-                    z.isMitigated := true
-                    z.sFresh      := 0.0
-                else if z.touchCount == 1
-                    z.sFresh := 1.0
+    if array.size(persistZones) > 0
+        for zi = 0 to array.size(persistZones) - 1
+            z = array.get(persistZones, zi)
+            if not z.isMitigated and barTime > z.formedAt
+                inZone = barLow <= z.zoneTop and barHigh >= z.zoneBottom
+                if inZone
+                    z.touchCount := z.touchCount + 1
+                    closedThrough = z.side == "demand" ? barClose < z.wickExtreme : barClose > z.wickExtreme
+                    if closedThrough
+                        z.isMitigated := true
+                        z.sFresh      := 0.0
+                    else if z.touchCount == 1
+                        z.sFresh := 1.0
 
 // ── État persistant ───────────────────────────────────────────────
 var array<SDZone> g_zones = array.new<SDZone>()
@@ -391,61 +395,66 @@ if newHtfBar and not na(htfTime[1])
         f_updateZonesOnBar(g_zones, array.get(g_hL, n15 - 1), array.get(g_hH, n15 - 1), array.get(g_hC, n15 - 1), array.get(g_hT, n15 - 1))
 
     // ── Redessin (delete-all puis recréation, comme la version MQL5) ──
-    for bi = 0 to array.size(g_boxes) - 1
-        box.delete(array.get(g_boxes, bi))
-    array.clear(g_boxes)
-    for li = 0 to array.size(g_labels) - 1
-        label.delete(array.get(g_labels, li))
-    array.clear(g_labels)
+    if array.size(g_boxes) > 0
+        for bi = 0 to array.size(g_boxes) - 1
+            box.delete(array.get(g_boxes, bi))
+        array.clear(g_boxes)
+    if array.size(g_labels) > 0
+        for li = 0 to array.size(g_labels) - 1
+            label.delete(array.get(g_labels, li))
+        array.clear(g_labels)
 
     // Tri par formed_at décroissant (les plus récentes en premier)
     nZones = array.size(g_zones)
     idx = array.new<int>(nZones)
-    for k = 0 to nZones - 1
-        array.set(idx, k, k)
-    for a = 1 to nZones - 1
-        key = array.get(idx, a)
-        b = a - 1
-        while b >= 0 and array.get(g_zones, array.get(idx, b)).formedAt < array.get(g_zones, key).formedAt
-            array.set(idx, b + 1, array.get(idx, b))
-            b := b - 1
-        array.set(idx, b + 1, key)
+    if nZones > 0
+        for k = 0 to nZones - 1
+            array.set(idx, k, k)
+    if nZones > 1
+        for a = 1 to nZones - 1
+            key = array.get(idx, a)
+            b = a - 1
+            while b >= 0 and array.get(g_zones, array.get(idx, b)).formedAt < array.get(g_zones, key).formedAt
+                array.set(idx, b + 1, array.get(idx, b))
+                b := b - 1
+            array.set(idx, b + 1, key)
 
     nowTime = array.size(g_hT) > 0 ? array.get(g_hT, array.size(g_hT) - 1) : time
     shown = 0
-    for a = 0 to nZones - 1
-        if shown >= InpMaxZonesShown
-            break
-        z = array.get(g_zones, array.get(idx, a))
-        total = f_zoneTotal(z)
-        if not (z.isMitigated and not InpShowMitigated) and total >= InpMinZoneScoreToShow
-            isDemand = z.side == "demand"
-            col    = z.isMitigated ? InpMitigatedColor : (isDemand ? InpDemandColor : InpSupplyColor)
-            lblCol = z.isMitigated ? InpMitigatedColor : (isDemand ? InpDemandLabelColor : InpSupplyLabelColor)
+    if nZones > 0
+        for a = 0 to nZones - 1
+            if shown >= InpMaxZonesShown
+                break
+            z = array.get(g_zones, array.get(idx, a))
+            total = f_zoneTotal(z)
+            if not (z.isMitigated and not InpShowMitigated) and total >= InpMinZoneScoreToShow
+                isDemand = z.side == "demand"
+                col    = z.isMitigated ? InpMitigatedColor : (isDemand ? InpDemandColor : InpSupplyColor)
+                lblCol = z.isMitigated ? InpMitigatedColor : (isDemand ? InpDemandLabelColor : InpSupplyLabelColor)
 
-            dispTop    = z.zoneTop
-            dispBottom = z.zoneBottom
-            midPrice   = (dispTop + dispBottom) / 2.0
-            minHeight  = midPrice * (InpMinHeightPct / 100.0)
-            if InpMinHeightPct > 0 and (dispTop - dispBottom) < minHeight
-                pad = (minHeight - (dispTop - dispBottom)) / 2.0
-                dispTop    := dispTop + pad
-                dispBottom := dispBottom - pad
+                dispTop    = z.zoneTop
+                dispBottom = z.zoneBottom
+                midPrice   = (dispTop + dispBottom) / 2.0
+                minHeight  = midPrice * (InpMinHeightPct / 100.0)
+                if InpMinHeightPct > 0 and (dispTop - dispBottom) < minHeight
+                    pad = (minHeight - (dispTop - dispBottom)) / 2.0
+                    dispTop    := dispTop + pad
+                    dispBottom := dispBottom - pad
 
-            newBox = box.new(left = z.formedAt, top = dispTop, right = nowTime, bottom = dispBottom,
-                 border_color = col, bgcolor = col, border_width = z.isMitigated ? 1 : 2,
-                 border_style = z.isMitigated ? line.style_dotted : line.style_solid,
-                 xloc = xloc.bar_time)
-            array.push(g_boxes, newBox)
+                newBox = box.new(left = z.formedAt, top = dispTop, right = nowTime, bottom = dispBottom,
+                     border_color = col, bgcolor = col, border_width = z.isMitigated ? 1 : 2,
+                     border_style = z.isMitigated ? line.style_dotted : line.style_solid,
+                     xloc = xloc.bar_time)
+                array.push(g_boxes, newBox)
 
-            lblText = (isDemand ? "DEMANDE (" : "OFFRE (") + str.tostring(int(math.round(total))) + "/10)"
-            // style_label_right : la pointe est à droite (sur nowTime),
-            // le texte s'étend donc vers la GAUCHE — reste dans la zone
-            // visible au lieu de partir dans l'espace vide futur.
-            newLbl = label.new(x = nowTime, y = midPrice, text = lblText + " ",
-                 color = color.new(color.white, 100), textcolor = lblCol,
-                 style = label.style_label_right, size = size.normal,
-                 xloc = xloc.bar_time)
-            array.push(g_labels, newLbl)
+                lblText = (isDemand ? "DEMANDE (" : "OFFRE (") + str.tostring(int(math.round(total))) + "/10)"
+                // style_label_right : la pointe est à droite (sur nowTime),
+                // le texte s'étend donc vers la GAUCHE — reste dans la zone
+                // visible au lieu de partir dans l'espace vide futur.
+                newLbl = label.new(x = nowTime, y = midPrice, text = lblText + " ",
+                     color = color.new(color.white, 100), textcolor = lblCol,
+                     style = label.style_label_right, size = size.normal,
+                     xloc = xloc.bar_time)
+                array.push(g_labels, newLbl)
 
-            shown := shown + 1
+                shown := shown + 1
