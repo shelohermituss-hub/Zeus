@@ -1,0 +1,79 @@
+{
+  "meta": {
+    "symbol": "XAUUSD",
+    "period": "2026-02-01..2026-02-27",
+    "ltf": "ticks 1s"
+  },
+  "results": {
+    "FULL (A++, r\u00e9f\u00e9rence)": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "CORE (structure+OTE+POC+FVG+killzone)": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "CORE + sweep entr\u00e9e (#8)": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "CORE + mod\u00e8le d'entr\u00e9e complet (sweep+pattern+choch)": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    },
+    "CORE + 1 seule liquidit\u00e9 externe (session sweep)": {
+      "initial_balance": 10000.0,
+      "final_equity": 10000.0,
+      "net_pnl": 0.0,
+      "total_return_pct": 0.0,
+      "n_trades": 0,
+      "win_rate": 0.0,
+      "avg_win": 0.0,
+      "avg_loss": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "total_fees": 0.0
+    }
+  }
+}
