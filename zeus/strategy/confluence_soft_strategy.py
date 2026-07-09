@@ -9,10 +9,29 @@ Diagnostics on real Feb 2026 XAUUSD tick data showed that requirement
 produces zero setups even after fixing two real scoring bugs (see
 confluence.py's require_entry_gate / zone_tolerance_pct) — the surviving
 bottleneck is a genuine, rare simultaneous alignment of every confirmation,
-not a bug. This strategy instead counts how many of the 10 confirmations
-are true and thresholds on the total, matching the user's own A+ (6-7/10)
-/ A++ (8-9/10) grading, so a setup missing one weak confirmation isn't
-discarded outright.
+not a bug. This strategy instead counts how many confirmations are true
+and thresholds on the total, so a setup missing one weak confirmation
+isn't discarded outright.
+
+v2 audit fixes (see git history for the full audit writeup):
+  - The HTF zone check used to be a hard prerequisite even in "soft" mode
+    (return NONE before any scoring). It is now itself one of the scored
+    confirmations (any_zone); OB/FVG/OTE-specific membership is scored
+    separately, so a bar can still accumulate points from structure,
+    session, liquidity etc. without literally sitting inside a zone.
+  - Two of the original 10 items were themselves 3-5-way hard ANDs
+    (external_liquidity, entry_model), which made a single "soft" point
+    almost as restrictive as several hard gates combined. They are now
+    unbundled into individual confirmations (weekly_bias, daily_bias,
+    session_sweep, ltf_internal_bias, ltf_fvg, ltf_sweep, entry_pattern,
+    choch_candle) for a finer, less brittle N-of-M count.
+  - The redundant "confluence_score" item (itself an aggregate of several
+    factors already counted individually here) was dropped to avoid
+    double-counting the same underlying facts.
+  - The Fibonacci OTE / 50% confirmations now include a staleness guard:
+    get_latest_fib_zone() returns the most recently formed zone with no
+    recency check, so without this guard a setup could "confirm" against
+    a swing leg from long ago that price has since moved far away from.
 
 No new detection logic is added — every confirmation reuses the exact
 same SMC sub-module checks as ConfluenceScalpStrategy/MTFSMCStrategy.
@@ -22,11 +41,11 @@ from __future__ import annotations
 import pandas as pd
 
 from zeus.strategy.base import Signal, SignalType
-from zeus.strategy.confluence import best_confluence
 from zeus.strategy.mtf_strategy import MTFSMCStrategy
 from zeus.strategy.smc.candle_pattern import detect_entry_candle
 from zeus.strategy.smc.fvg import get_active_fvgs
 from zeus.strategy.smc.fibonacci import get_latest_fib_zone
+from zeus.strategy.smc.indicator import analyze
 from zeus.strategy.smc.ltf_sweep import ltf_liquidity_sweep
 from zeus.strategy.smc.pivot import BULLISH
 from zeus.strategy.smc.session import (
@@ -37,10 +56,12 @@ from zeus.strategy.smc.session import (
     prev_session_liquidity_swept,
 )
 
-# Confirmation names in documented order (1-10), for reason strings.
+# Confirmation names, in evaluation order, for reason strings.
 _CONFIRMATION_NAMES = (
-    "structure", "ote", "order_block", "external_liquidity", "fvg",
-    "poc", "killzone", "entry_model", "confluence_score", "fib_50",
+    "structure", "any_zone", "order_block", "ote", "fvg_htf", "poc",
+    "weekly_bias", "daily_bias", "session_sweep", "killzone",
+    "ltf_internal_bias", "ltf_fvg", "ltf_sweep", "entry_pattern",
+    "choch_candle", "fib_50",
 )
 
 
@@ -63,7 +84,7 @@ class ConfluenceSoftScoredStrategy(MTFSMCStrategy):
         self,
         df_htf_1h:               pd.DataFrame,
         df_daily:                pd.DataFrame | None = None,
-        min_confirmations:       int   = 8,
+        min_confirmations:       int   = 12,
         sl_pips:                 float = 20.0,
         max_sl_pips:             float = 30.0,
         pip_value:               float = 1.0,
@@ -77,6 +98,7 @@ class ConfluenceSoftScoredStrategy(MTFSMCStrategy):
         session_sweep_lookback:  int   = 30,
         ltf_sweep_lookback:      int   = 3,
         poc_tolerance_pct:       float = 0.003,
+        max_fib_zone_age_bars:   int   = 40,
     ) -> None:
         super().__init__(
             df_htf=df_htf_1h,
@@ -101,6 +123,7 @@ class ConfluenceSoftScoredStrategy(MTFSMCStrategy):
         self._soft_ltf_sweep_lookback = ltf_sweep_lookback
         self._min_wick_ratio_soft    = min_wick_ratio
         self._poc_tol_soft           = poc_tolerance_pct
+        self._max_fib_zone_age_bars  = max_fib_zone_age_bars
         self._session_ranges_soft: list | None = None
 
     def generate_signal(self, df: pd.DataFrame, bar_index: int) -> Signal:
@@ -118,70 +141,89 @@ class ConfluenceSoftScoredStrategy(MTFSMCStrategy):
         if direction == 0:
             return Signal(SignalType.NONE, 0.0, "no HTF swing bias", bar_index)
 
+        # Zone membership is itself a scored confirmation now (not a hard
+        # prerequisite) — a bar can still accumulate points from structure,
+        # session, and liquidity confirmations without literally sitting
+        # inside an OB/FVG/OTE zone. zone_type is None when no zone found;
+        # the OB-specific confirmation and the signal-log dedup key both
+        # degrade gracefully to that.
         zone_info = self._in_htf_zone(htf_result, htf_bar_idx, close, direction)
-        if zone_info is None:
-            return Signal(SignalType.NONE, 0.0, "price outside HTF zone", bar_index)
-        zone_type, _zone_low, _zone_high = zone_info
+        zone_type = zone_info[0] if zone_info is not None else None
+
+        # Fibonacci zone staleness guard: get_latest_fib_zone() returns the
+        # most recently formed zone with no recency check, so without this
+        # guard a stale swing leg from long ago could "confirm" OTE/50%
+        # even though price has since moved far away from it.
+        fib_zone = self._fresh_fib_zone(htf_result, htf_bar_idx, direction)
 
         confirmations: list[bool] = []
 
-        # #1 Market structure — HTF swing bias is defined (checked above).
+        # Market structure — HTF swing bias is defined (checked above).
         confirmations.append(True)
 
-        # #2 Fibonacci OTE (61.8-78.6% retracement)
-        fib_zone = get_latest_fib_zone(htf_result.fib_zones, htf_bar_idx, direction)
-        confirmations.append(fib_zone is not None and fib_zone.is_in_ote(close))
+        # Any active HTF zone (OB / FVG / OTE), regardless of type.
+        confirmations.append(zone_info is not None)
 
-        # #3 Supply/Demand zone (Order Block)
+        # Supply/Demand zone specifically (Order Block).
         confirmations.append(zone_type == "OB")
 
-        # #4 External liquidity: weekly bias + prior-session sweep + daily bias
+        # Fibonacci OTE (61.8-78.6% retracement), not stale.
+        confirmations.append(fib_zone is not None and fib_zone.is_in_ote(close))
+
+        # FVG / Imbalance (HTF).
+        confirmations.append(any(
+            fvg.direction == direction and fvg.bottom <= close <= fvg.top
+            for fvg in get_active_fvgs(htf_result.fvgs, htf_bar_idx)
+        ))
+
+        # POC (volume Point of Control).
+        vp = htf_result.volume_profile
+        confirmations.append(vp is not None and vp.is_near_poc(close, self._poc_tol_soft))
+
+        # Weekly bias (neutral counts as non-conflicting, matching the
+        # hard-gate variant's soft-mode semantics).
+        wb = get_weekly_bias(self._df_daily, ltf_ts) if self._df_daily is not None else 0
+        confirmations.append(wb == 0 or wb == direction)
+
+        # Daily bias.
+        db = get_daily_bias(self._df_daily, ltf_ts) if self._df_daily is not None else 0
+        confirmations.append(db == 0 or db == direction)
+
+        # Prior-session liquidity sweep.
         if self._session_ranges_soft is None:
             self._session_ranges_soft = detect_session_ranges(df)
         session_swept, _reason = prev_session_liquidity_swept(
             self._session_ranges_soft, df, bar_index, direction,
             sweep_lookback=self._soft_session_lookback,
         )
-        wb = get_weekly_bias(self._df_daily, ltf_ts) if self._df_daily is not None else 0
-        db = get_daily_bias(self._df_daily, ltf_ts) if self._df_daily is not None else 0
-        confirmations.append(
-            session_swept and (wb == 0 or wb == direction) and (db == 0 or db == direction)
-        )
+        confirmations.append(session_swept)
 
-        # #5 FVG / Imbalance
-        confirmations.append(any(
-            fvg.direction == direction and fvg.bottom <= close <= fvg.top
-            for fvg in get_active_fvgs(htf_result.fvgs, htf_bar_idx)
-        ))
-
-        # #6 POC (volume Point of Control)
-        vp = htf_result.volume_profile
-        confirmations.append(vp is not None and vp.is_near_poc(close, self._poc_tol_soft))
-
-        # #7 Kill zone session (London / NY)
+        # Kill zone session (London / NY).
         confirmations.append(killzone_name(ltf_ts) is not None)
 
-        # #8 Entry model: LTF internal bias trigger + sweep + entry candle + CHoCH direction
-        ltf_entry_ok = self._ltf_entry_confirmed(df, bar_index, direction, close)
+        # LTF internal bias trigger + LTF FVG — evaluated together (one
+        # analyze() call) but scored as two separate confirmations.
+        ltf_bias_ok, ltf_fvg_ok = self._ltf_bias_and_fvg(df, bar_index, direction, close)
+        confirmations.append(ltf_bias_ok)
+        confirmations.append(ltf_fvg_ok)
+
+        # LTF liquidity sweep at entry (inducement sweep).
         sweep_ok, _reason = ltf_liquidity_sweep(
             df, bar_index, direction, lookback=self._soft_ltf_sweep_lookback,
         )
+        confirmations.append(sweep_ok)
+
+        # Entry candle pattern (hammer/pin bar or engulfing).
         pattern_ok, _reason = detect_entry_candle(
             df, bar_index, direction, self._min_wick_ratio_soft,
         )
+        confirmations.append(pattern_ok)
+
+        # CHoCH candle — entry bar itself closes in the trade direction.
         bar_open = float(df["open"].iloc[bar_index])
-        choch_ok = (close > bar_open) if direction == BULLISH else (close < bar_open)
-        confirmations.append(ltf_entry_ok and sweep_ok and pattern_ok and choch_ok)
+        confirmations.append((close > bar_open) if direction == BULLISH else (close < bar_open))
 
-        # #9 Confluence structure+zone (the underlying 10-factor confluence score)
-        cs = best_confluence(
-            htf_result, close, htf_bar_idx, min_score=4.0, timestamp=ltf_ts,
-            zone_tolerance_pct=self._zone_tol, sweep_zone_tol_pct=self._sweep_zone_tol_pct,
-            require_entry_gate=False,
-        )
-        confirmations.append(cs is not None)
-
-        # #10 Fibonacci 50% (premium/discount)
+        # Fibonacci 50% (premium/discount), not stale.
         pd_ok = False
         if fib_zone is not None:
             level_50 = fib_zone.level_50
@@ -241,3 +283,53 @@ class ConfluenceSoftScoredStrategy(MTFSMCStrategy):
             f"SOFT {n_true}/{self._N_CONFIRMATIONS} zone={zone_type} SL={sl_pips:.1f}pips"
         )
         return Signal(stype, n_true / self._N_CONFIRMATIONS, reason, bar_index)
+
+    def _fresh_fib_zone(self, htf_result, htf_bar_idx: int, direction: int):
+        """
+        Return the latest FibZone for *direction*, or None if it doesn't
+        exist or is older than max_fib_zone_age_bars HTF bars.
+        """
+        fib_zone = get_latest_fib_zone(htf_result.fib_zones, htf_bar_idx, direction)
+        if fib_zone is None:
+            return None
+        if (htf_bar_idx - fib_zone.formed_at) > self._max_fib_zone_age_bars:
+            return None
+        return fib_zone
+
+    def _ltf_bias_and_fvg(
+        self,
+        df:        pd.DataFrame,
+        bar_index: int,
+        direction: int,
+        price:     float,
+    ) -> tuple[bool, bool]:
+        """
+        Same LTF window analysis as MTFSMCStrategy._ltf_entry_confirmed(),
+        but returns the internal-bias-match and active-FVG-at-price checks
+        as two independent booleans instead of one bundled AND, so each can
+        be scored as its own confirmation.
+        """
+        start  = max(0, bar_index - self._ltf_lookback + 1)
+        window = df.iloc[start: bar_index + 1]
+        if len(window) < self._internal_length * 2 + 1:
+            return False, False
+        try:
+            ltf_result = analyze(
+                window,
+                swing_length=min(self._swing_length, len(window) // 2),
+                internal_length=self._internal_length,
+                atr_period=min(self._atr_period, len(window)),
+            )
+        except Exception:
+            return False, False
+
+        bias_ok = ltf_result.internal_bias == direction
+
+        tol = self._zone_tol
+        local_last_bar = len(window) - 1
+        fvg_ok = any(
+            fvg.direction == direction
+            and fvg.bottom * (1 - tol) <= price <= fvg.top * (1 + tol)
+            for fvg in get_active_fvgs(ltf_result.fvgs, local_last_bar)
+        )
+        return bias_ok, fvg_ok

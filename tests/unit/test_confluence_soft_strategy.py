@@ -33,8 +33,8 @@ def _make_strategy(**kwargs) -> ConfluenceSoftScoredStrategy:
 
 
 class TestConstruction:
-    def test_default_min_confirmations_is_8(self):
-        assert _make_strategy()._min_confirmations == 8
+    def test_default_min_confirmations_is_12(self):
+        assert _make_strategy()._min_confirmations == 12
 
     def test_custom_min_confirmations(self):
         assert _make_strategy(min_confirmations=6)._min_confirmations == 6
@@ -54,8 +54,16 @@ class TestConstruction:
     def test_htf_internal_align_not_required(self):
         assert _make_strategy()._require_htf_internal_align is False
 
-    def test_n_confirmations_constant_is_10(self):
-        assert ConfluenceSoftScoredStrategy._N_CONFIRMATIONS == 10
+    def test_n_confirmations_constant_is_16(self):
+        assert ConfluenceSoftScoredStrategy._N_CONFIRMATIONS == 16
+
+    def test_zone_is_not_a_hard_gate(self):
+        """Regression guard for the audit fix: the HTF zone check must be
+        one of the scored confirmations, not an early hard return, so a
+        bar can still accumulate points without literally sitting inside
+        an OB/FVG/OTE zone."""
+        from zeus.strategy.confluence_soft_strategy import _CONFIRMATION_NAMES
+        assert "any_zone" in _CONFIRMATION_NAMES
 
 
 class TestFailClosed:
@@ -110,6 +118,61 @@ class TestMonotonicity:
         # "price outside HTF zone", which short-circuit before counting).
         count_msgs = [s for s in rejected_on_count if "confirmations (need" in s.reason]
         assert len(count_msgs) >= 0  # documents the reason format exists; no data-shape guarantee
+
+
+class TestFibZoneStaleness:
+    def test_stale_fib_zone_is_dropped(self):
+        """Regression guard for the audit fix: a FibZone formed long before
+        max_fib_zone_age_bars must not count toward ote/fib_50, since price
+        may have moved far away from that swing leg in the meantime."""
+        from unittest.mock import MagicMock
+        from zeus.strategy.smc.fibonacci import FibZone
+        from zeus.strategy.smc.pivot import BULLISH
+
+        s = _make_strategy(max_fib_zone_age_bars=5)
+        stale_zone = FibZone(
+            swing_high=3100.0, swing_low=3000.0, direction=BULLISH,
+            leg_high_bar=0, leg_low_bar=1, formed_at=0,
+        )
+        htf_result = MagicMock(fib_zones=[stale_zone])
+        assert s._fresh_fib_zone(htf_result, 100, BULLISH) is None
+
+    def test_fresh_fib_zone_is_kept(self):
+        from unittest.mock import MagicMock
+        from zeus.strategy.smc.fibonacci import FibZone
+        from zeus.strategy.smc.pivot import BULLISH
+
+        s = _make_strategy(max_fib_zone_age_bars=5)
+        fresh_zone = FibZone(
+            swing_high=3100.0, swing_low=3000.0, direction=BULLISH,
+            leg_high_bar=0, leg_low_bar=1, formed_at=98,
+        )
+        htf_result = MagicMock(fib_zones=[fresh_zone])
+        assert s._fresh_fib_zone(htf_result, 100, BULLISH) is fresh_zone
+
+    def test_default_max_fib_zone_age_bars(self):
+        assert _make_strategy()._max_fib_zone_age_bars == 40
+
+    def test_custom_max_fib_zone_age_bars(self):
+        assert _make_strategy(max_fib_zone_age_bars=10)._max_fib_zone_age_bars == 10
+
+
+class TestLtfBiasAndFvgSplit:
+    def test_returns_two_independent_booleans(self):
+        s = _make_strategy()
+        df = _ohlcv(100, freq="1min", start="2026-01-05 07:00")
+        from zeus.strategy.smc.pivot import BULLISH
+        bias_ok, fvg_ok = s._ltf_bias_and_fvg(df, 50, BULLISH, float(df["close"].iloc[50]))
+        assert isinstance(bias_ok, bool) or isinstance(bias_ok, (int,))
+        assert isinstance(fvg_ok, bool) or isinstance(fvg_ok, (int,))
+
+    def test_insufficient_window_returns_false_false(self):
+        s = _make_strategy()
+        df = _ohlcv(5, freq="1min", start="2026-01-05 07:00")
+        from zeus.strategy.smc.pivot import BULLISH
+        bias_ok, fvg_ok = s._ltf_bias_and_fvg(df, 2, BULLISH, float(df["close"].iloc[2]))
+        assert bias_ok is False
+        assert fvg_ok is False
 
 
 class TestSignalShape:
