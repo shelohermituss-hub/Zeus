@@ -1,0 +1,451 @@
+//@version=6
+// ZeusVision — Zones Supply/Demand (portage Pine Script de mt5/ZeusP11)
+//
+// Port fidèle de la détection de zones déjà validée en MQL5/Python
+// (ZeusZones.mqh / ZeusPivot.mqh, eux-mêmes portés de
+// zeus/strategy/supply_demand/zone_detector.py + pivot_candle.py) :
+//   - Score de bougie pivot (demande/offre) sur 10, 4 critères.
+//   - Cassure de structure (BOS) recherchée après chaque pivot valide.
+//   - Score de zone sur 10 = BOS + Impulsion + Temps + Fraîcheur + Sweep.
+//   - Suivi de mitigation (une zone traversée à la clôture perd sa validité).
+//
+// Multi-timeframe : la détection tourne sur le timeframe choisi par
+// InpZoneTF (M15 par défaut, comme en production), récupéré via
+// request.security() en mode non-repaint — l'indicateur peut être posé
+// sur n'importe quel graphique (M1 à H4), la détection reste basée sur
+// les mêmes bougies M15 quel que soit le graphique hôte.
+//
+// Priorité à la lisibilité (retour utilisateur sur la version MQL5) :
+// peu de zones affichées par défaut, seulement les valides et déjà
+// correctes, gros mot "DEMANDE"/"OFFRE" collé au prix actuel.
+//
+// Le pattern Wyckoff (Accumulation -> Manipulation -> MSS) n'est PAS
+// inclus dans cette première version Pine — il est désactivé par défaut
+// dans la version MQL5 également ; peut être ajouté en suivi si besoin.
+//
+// ⚠️ Non testé en compilation dans cet environnement (pas d'accès à
+// l'éditeur Pine de TradingView ici) — chaque fonction a été relue
+// manuellement pour la syntaxe Pine v6, mais une première compilation
+// réelle dans TradingView reste nécessaire avant usage. Renvoie-moi les
+// éventuelles erreurs de compilation pour que je corrige.
+indicator("ZeusVision — Zones Supply/Demand", overlay = true,
+     max_boxes_count = 500, max_labels_count = 500)
+
+// ── Inputs ────────────────────────────────────────────────────────
+grp_gen = "Général"
+InpZoneTF        = input.timeframe("15", "Timeframe des zones (M15 = production)", group = grp_gen)
+InpMaxHtfBars    = input.int(1500, "Barres HTF conservées en mémoire", minval = 200, maxval = 5000, group = grp_gen)
+
+grp_zone = "Affichage des zones"
+InpMinZoneScoreToShow = input.float(4.0, "Score minimum affiché (0-10)", minval = 0.0, maxval = 10.0, group = grp_zone)
+InpShowMitigated      = input.bool(false, "Afficher les zones mitigées (déjà traversées)", group = grp_zone)
+InpMaxZonesShown      = input.int(12, "Nombre max de zones affichées", minval = 1, maxval = 100, group = grp_zone)
+InpMinHeightPct       = input.float(0.05, "Hauteur visuelle minimum (% du prix)", minval = 0.0, group = grp_zone)
+InpDemandColor        = input.color(color.new(color.blue, 80), "Couleur zone de demande", group = grp_zone)
+InpSupplyColor        = input.color(color.new(color.red, 80), "Couleur zone d'offre", group = grp_zone)
+InpDemandLabelColor   = input.color(color.navy, "Couleur texte DEMANDE", group = grp_zone)
+InpSupplyLabelColor   = input.color(color.maroon, "Couleur texte OFFRE", group = grp_zone)
+InpMitigatedColor     = input.color(color.new(color.gray, 88), "Couleur zone mitigée", group = grp_zone)
+
+grp_par = "Paramètres de détection (défauts = valeurs production)"
+InpSwingLookback      = input.int(5, "Swing lookback", group = grp_par)
+InpBosLookback        = input.int(20, "BOS lookback (recherche du niveau à casser)", group = grp_par)
+InpBosMaxBarsDemand   = input.int(40, "BOS max bars (demande)", group = grp_par)
+InpBosMaxBarsSupply   = input.int(80, "BOS max bars (offre)", group = grp_par)
+InpMaxBaseCandles     = input.int(10, "Bougies de base max", group = grp_par)
+InpMinPivotScore      = input.float(4.0, "Score pivot minimum", group = grp_par)
+InpMinZoneScoreDetect = input.float(4.0, "Score zone minimum (détection)", group = grp_par)
+InpAtrPeriod          = input.int(14, "Période ATR", group = grp_par)
+InpSweepLookback      = input.int(20, "Lookback sweep (score)", group = grp_par)
+
+// ── Types ─────────────────────────────────────────────────────────
+type SDZone
+    string side          = "demand"   // "demand" ou "supply"
+    float  zoneTop       = na
+    float  zoneBottom    = na
+    float  wickExtreme   = na
+    int    formedAt      = na         // heure (ms) de la barre de BOS
+    float  sBos          = 0.0
+    float  sImpulse      = 0.0
+    float  sTimeScore    = 0.0
+    float  sFresh        = 0.0
+    float  sSweep        = 0.0
+    bool   isMitigated   = false
+    int    touchCount    = 0
+
+f_zoneTotal(z) =>
+    z.sBos + z.sImpulse + z.sTimeScore + z.sFresh + z.sSweep
+
+// ── Bougie pivot (port de ZeusPivot.mqh) ─────────────────────────────
+f_scoreDemand(rng, body, upper, lower, bodyMid) =>
+    result = 0.0
+    if rng >= 1e-8
+        lowerR = lower / rng
+        upperR = upper / rng
+        bodyR  = body / rng
+        pts = math.min(4.0, lowerR * 8.0)
+        pts := pts + math.max(0.0, 2.0 - bodyR * (2.0 / 0.30))
+        pts := pts + math.min(2.0, bodyMid * 2.0)
+        pts := pts + math.max(0.0, 2.0 - upperR * (2.0 / 0.10))
+        result := math.min(10.0, pts)
+    result
+
+f_scoreSupply(rng, body, upper, lower, bodyMid) =>
+    result = 0.0
+    if rng >= 1e-8
+        lowerR = lower / rng
+        upperR = upper / rng
+        bodyR  = body / rng
+        pts = math.min(4.0, upperR * 8.0)
+        pts := pts + math.max(0.0, 2.0 - bodyR * (2.0 / 0.30))
+        pts := pts + math.min(2.0, (1.0 - bodyMid) * 2.0)
+        pts := pts + math.max(0.0, 2.0 - lowerR * (2.0 / 0.10))
+        result := math.min(10.0, pts)
+    result
+
+// Retourne [side, score, bodyHigh, bodyLow] ; side: "demand"/"supply"/"doji"
+f_analyzeCandle(o, h, l, c) =>
+    rng    = h - l
+    bodyH  = math.max(o, c)
+    bodyL  = math.min(o, c)
+    body   = 0.0
+    upper  = 0.0
+    lower  = 0.0
+    bodyMid = 0.5
+    scoreD = 0.0
+    scoreS = 0.0
+    if rng >= 1e-8
+        body    := bodyH - bodyL
+        upper   := h - bodyH
+        lower   := bodyL - l
+        bodyMid := ((bodyH + bodyL) / 2.0 - l) / rng
+        scoreD  := f_scoreDemand(rng, body, upper, lower, bodyMid)
+        scoreS  := f_scoreSupply(rng, body, upper, lower, bodyMid)
+    lowerR = rng >= 1e-8 ? lower / rng : 0.0
+    upperR = rng >= 1e-8 ? upper / rng : 0.0
+    lowerDominates = lowerR >= 0.25 and lowerR >= upperR * 1.5 and scoreD >= 3.0
+    upperDominates = upperR >= 0.25 and upperR >= lowerR * 1.5 and scoreS >= 3.0
+    side  = "doji"
+    score = math.max(scoreD, scoreS)
+    if lowerDominates and (not upperDominates or scoreD >= scoreS)
+        side  := "demand"
+        score := scoreD
+    else if upperDominates
+        side  := "supply"
+        score := scoreS
+    [side, score, bodyH, bodyL]
+
+// ── ATR (rolling mean, min_periods=1 — port de ZeusComputeATR) ──────
+f_computeATR(h, l, c, n, period) =>
+    tr  = array.new<float>(n, 0.0)
+    atr = array.new<float>(n, 0.0)
+    for i = 0 to n - 1
+        hl = array.get(h, i) - array.get(l, i)
+        trVal = i == 0 ? hl : math.max(hl, math.max(math.abs(array.get(h, i) - array.get(c, i - 1)), math.abs(array.get(l, i) - array.get(c, i - 1))))
+        array.set(tr, i, trVal)
+    sum = 0.0
+    for i = 0 to n - 1
+        sum := sum + array.get(tr, i)
+        if i >= period
+            sum := sum - array.get(tr, i - period)
+        cnt = i < period ? i + 1 : period
+        array.set(atr, i, sum / cnt)
+    atr
+
+// ── Swing detection (port de ZeusIsSwingLow/High) ───────────────────
+f_isSwingLow(l, n, i, lb) =>
+    startK = math.max(0, i - lb)
+    endK   = math.min(n, i + lb + 1)
+    mn = 1e18
+    for k = startK to endK - 1
+        if array.get(l, k) < mn
+            mn := array.get(l, k)
+    array.get(l, i) <= mn
+
+f_isSwingHigh(h, n, i, lb) =>
+    startK = math.max(0, i - lb)
+    endK   = math.min(n, i + lb + 1)
+    mx = -1e18
+    for k = startK to endK - 1
+        if array.get(h, k) > mx
+            mx := array.get(h, k)
+    array.get(h, i) >= mx
+
+// ── BOS detection (port de ZeusFindBullishBOS/BearishBOS) ───────────
+// Retourne [bosBar, bosLevel] ; bosBar == -1 si non trouvé.
+f_findBullishBOS(h, c, n, pivotBar, bosLookback, bosMaxBars) =>
+    lbStart = math.max(0, pivotBar - bosLookback)
+    lvl = -1e18
+    for k = lbStart to pivotBar - 1
+        if array.get(h, k) > lvl
+            lvl := array.get(h, k)
+    bosBar   = -1
+    bosLevel = 0.0
+    if lvl > -1e18
+        endK = math.min(n, pivotBar + bosMaxBars + 1)
+        for j = pivotBar + 1 to endK - 1
+            if bosBar == -1 and array.get(c, j) > lvl
+                bosBar   := j
+                bosLevel := lvl
+    [bosBar, bosLevel]
+
+f_findBearishBOS(l, c, n, pivotBar, bosLookback, bosMaxBars) =>
+    lbStart = math.max(0, pivotBar - bosLookback)
+    lvl = 1e18
+    for k = lbStart to pivotBar - 1
+        if array.get(l, k) < lvl
+            lvl := array.get(l, k)
+    bosBar   = -1
+    bosLevel = 0.0
+    if lvl < 1e18
+        endK = math.min(n, pivotBar + bosMaxBars + 1)
+        for j = pivotBar + 1 to endK - 1
+            if bosBar == -1 and array.get(c, j) < lvl
+                bosBar   := j
+                bosLevel := lvl
+    [bosBar, bosLevel]
+
+// ── Scoring (port de ZeusScoreBOS/Impulse/Time/Sweep) ───────────────
+f_scoreBOS(c, atr, bosBar, bosLevel, isDemand) =>
+    cVal = array.get(c, bosBar)
+    atrV = array.get(atr, bosBar)
+    result = 1.0
+    if atrV >= 1e-8
+        dist  = isDemand ? (cVal - bosLevel) : (bosLevel - cVal)
+        ratio = dist / atrV
+        result := ratio >= 0.50 ? 2.0 : ratio >= 0.30 ? 1.5 : ratio >= 0.10 ? 1.0 : 0.5
+    result
+
+f_scoreImpulse(o, h, l, c, pivotBar, bosBar) =>
+    startI = pivotBar + 1
+    endI   = bosBar
+    result = 1.0
+    if endI >= startI
+        sum = 0.0
+        cnt = 0
+        for i = startI to endI
+            rng = array.get(h, i) - array.get(l, i)
+            if rng >= 1e-8
+                sum := sum + math.abs(array.get(c, i) - array.get(o, i)) / rng
+                cnt := cnt + 1
+        if cnt > 0
+            avg = sum / cnt
+            result := avg >= 0.70 ? 2.0 : avg >= 0.55 ? 1.5 : avg >= 0.40 ? 1.0 : 0.5
+    result
+
+f_scoreTime(baseCandles) =>
+    baseCandles <= 2 ? 2.0 : baseCandles <= 4 ? 1.5 : baseCandles <= 6 ? 1.0 : baseCandles <= 8 ? 0.5 : 0.0
+
+f_scoreSweep(h, l, c, pivotBar, isDemand, lookback) =>
+    startI = math.max(0, pivotBar - lookback)
+    cnt = pivotBar - startI
+    result = 0.0
+    if cnt >= 3
+        tmp = array.new<float>(0)
+        if isDemand
+            for k = startI to pivotBar - 1
+                array.push(tmp, array.get(l, k))
+            ref = array.percentile_linear_interpolation(tmp, 25)
+            for k = startI to pivotBar - 1
+                if array.get(l, k) < ref and array.get(c, k) > ref
+                    result := 2.0
+        else
+            for k = startI to pivotBar - 1
+                array.push(tmp, array.get(h, k))
+            ref = array.percentile_linear_interpolation(tmp, 75)
+            for k = startI to pivotBar - 1
+                if array.get(h, k) > ref and array.get(c, k) < ref
+                    result := 2.0
+    result
+
+f_findBaseStart(h, l, atr, pivotBar, maxBaseCandles) =>
+    avgAtr    = array.get(atr, pivotBar)
+    threshold = avgAtr > 1e-8 ? avgAtr * 1.5 : 1e18
+    limit  = math.max(-1, pivotBar - maxBaseCandles)
+    result = math.max(0, pivotBar - maxBaseCandles)
+    if pivotBar - 1 > limit
+        for i = pivotBar - 1 to limit + 1 by -1
+            rng = array.get(h, i) - array.get(l, i)
+            if rng > threshold
+                result := i + 1
+                break
+    result
+
+// ── Scan complet (port de ZeusDetectZones) ───────────────────────────
+// Retourne un array<SDZone> des zones fraîchement détectées sur la
+// fenêtre HTF courante (dédup interne au batch, comme ZeusIsDuplicate).
+f_detectZones(t, o, h, l, c, n) =>
+    result = array.new<SDZone>()
+    if n >= InpSwingLookback * 2 + 2
+        atr = f_computeATR(h, l, c, n, InpAtrPeriod)
+        lo    = InpSwingLookback
+        hiLim = n - 1
+        if hiLim > lo
+            for i = lo to hiLim - 1
+                [pcSide, pcScore, pcBodyH, pcBodyL] = f_analyzeCandle(array.get(o, i), array.get(h, i), array.get(l, i), array.get(c, i))
+                if pcScore >= InpMinPivotScore and pcBodyH > pcBodyL
+                    isDemand = pcSide == "demand"
+                    isSupply = pcSide == "supply"
+                    bosBar   = -1
+                    bosLevel = 0.0
+                    if isDemand and f_isSwingLow(l, n, i, InpSwingLookback)
+                        [bb, bl] = f_findBullishBOS(h, c, n, i, InpBosLookback, InpBosMaxBarsDemand)
+                        bosBar   := bb
+                        bosLevel := bl
+                    else if isSupply and f_isSwingHigh(h, n, i, InpSwingLookback)
+                        [bb, bl] = f_findBearishBOS(l, c, n, i, InpBosLookback, InpBosMaxBarsSupply)
+                        bosBar   := bb
+                        bosLevel := bl
+                    if bosBar != -1
+                        baseStart   = f_findBaseStart(h, l, atr, i, InpMaxBaseCandles)
+                        baseCandles = i - baseStart + 1
+                        sBos    = f_scoreBOS(c, atr, bosBar, bosLevel, isDemand)
+                        sImp    = f_scoreImpulse(o, h, l, c, i, bosBar)
+                        sTime   = f_scoreTime(baseCandles)
+                        sSweep  = f_scoreSweep(h, l, c, i, isDemand, InpSweepLookback)
+                        sFresh  = 2.0
+                        total   = sBos + sImp + sTime + sFresh + sSweep
+                        if total >= InpMinZoneScoreDetect
+                            newZone = SDZone.new(
+                                 side = isDemand ? "demand" : "supply",
+                                 zoneTop = pcBodyH, zoneBottom = pcBodyL,
+                                 wickExtreme = isDemand ? array.get(l, i) : array.get(h, i),
+                                 formedAt = array.get(t, bosBar),
+                                 sBos = sBos, sImpulse = sImp, sTimeScore = sTime,
+                                 sFresh = sFresh, sSweep = sSweep,
+                                 isMitigated = false, touchCount = 0)
+                            dup = false
+                            for zi = 0 to array.size(result) - 1
+                                ez = array.get(result, zi)
+                                if ez.side == newZone.side
+                                    dist = math.abs((ez.zoneTop + ez.zoneBottom) / 2.0 - (newZone.zoneTop + newZone.zoneBottom) / 2.0)
+                                    refH = math.min(ez.zoneTop - ez.zoneBottom, newZone.zoneTop - newZone.zoneBottom)
+                                    if refH >= 1e-8 and dist < refH * 0.5
+                                        dup := true
+                            if not dup
+                                array.push(result, newZone)
+    result
+
+// Fusionne les zones fraîches dans l'état persistant (port de ZeusMergeZones)
+f_mergeZones(persistZones, freshZones) =>
+    for fi = 0 to array.size(freshZones) - 1
+        fz = array.get(freshZones, fi)
+        known = false
+        for zi = 0 to array.size(persistZones) - 1
+            ez = array.get(persistZones, zi)
+            if ez.formedAt == fz.formedAt and ez.side == fz.side and math.abs(ez.zoneBottom - fz.zoneBottom) < 1e-9
+                known := true
+        if not known
+            array.push(persistZones, fz)
+
+// Met à jour touches/mitigation sur une nouvelle barre HTF close
+// (port de ZeusUpdateZonesOnBar).
+f_updateZonesOnBar(persistZones, barLow, barHigh, barClose, barTime) =>
+    for zi = 0 to array.size(persistZones) - 1
+        z = array.get(persistZones, zi)
+        if not z.isMitigated and barTime > z.formedAt
+            inZone = barLow <= z.zoneTop and barHigh >= z.zoneBottom
+            if inZone
+                z.touchCount := z.touchCount + 1
+                closedThrough = z.side == "demand" ? barClose < z.wickExtreme : barClose > z.wickExtreme
+                if closedThrough
+                    z.isMitigated := true
+                    z.sFresh      := 0.0
+                else if z.touchCount == 1
+                    z.sFresh := 1.0
+
+// ── État persistant ───────────────────────────────────────────────
+var array<SDZone> g_zones = array.new<SDZone>()
+var array<int>    g_hT = array.new<int>()
+var array<float>  g_hO = array.new<float>()
+var array<float>  g_hH = array.new<float>()
+var array<float>  g_hL = array.new<float>()
+var array<float>  g_hC = array.new<float>()
+var array<box>    g_boxes  = array.new<box>()
+var array<label>  g_labels = array.new<label>()
+
+// ── Fetch HTF non-repaint (idiome standard : offset [1]) ────────────
+[htfTime, htfOpen, htfHigh, htfLow, htfClose] = request.security(syminfo.tickerid, InpZoneTF, [time, open, high, low, close], lookahead = barmerge.lookahead_off)
+newHtfBar = htfTime != htfTime[1]
+
+if newHtfBar and not na(htfTime[1])
+    // La barre qui vient de se clôturer est celle vue à l'itération
+    // précédente (htfTime[1]/htfOpen[1]/...), puisque htfTime ne change
+    // qu'au tout début de la barre HTF SUIVANTE.
+    array.push(g_hT, int(htfTime[1]))
+    array.push(g_hO, htfOpen[1])
+    array.push(g_hH, htfHigh[1])
+    array.push(g_hL, htfLow[1])
+    array.push(g_hC, htfClose[1])
+    if array.size(g_hT) > InpMaxHtfBars
+        array.shift(g_hT)
+        array.shift(g_hO)
+        array.shift(g_hH)
+        array.shift(g_hL)
+        array.shift(g_hC)
+
+    n15 = array.size(g_hT)
+    if n15 >= InpSwingLookback * 2 + 2
+        freshZones = f_detectZones(g_hT, g_hO, g_hH, g_hL, g_hC, n15)
+        f_mergeZones(g_zones, freshZones)
+        f_updateZonesOnBar(g_zones, array.get(g_hL, n15 - 1), array.get(g_hH, n15 - 1), array.get(g_hC, n15 - 1), array.get(g_hT, n15 - 1))
+
+    // ── Redessin (delete-all puis recréation, comme la version MQL5) ──
+    for bi = 0 to array.size(g_boxes) - 1
+        box.delete(array.get(g_boxes, bi))
+    array.clear(g_boxes)
+    for li = 0 to array.size(g_labels) - 1
+        label.delete(array.get(g_labels, li))
+    array.clear(g_labels)
+
+    // Tri par formed_at décroissant (les plus récentes en premier)
+    nZones = array.size(g_zones)
+    idx = array.new<int>(nZones)
+    for k = 0 to nZones - 1
+        array.set(idx, k, k)
+    for a = 1 to nZones - 1
+        key = array.get(idx, a)
+        b = a - 1
+        while b >= 0 and array.get(g_zones, array.get(idx, b)).formedAt < array.get(g_zones, key).formedAt
+            array.set(idx, b + 1, array.get(idx, b))
+            b := b - 1
+        array.set(idx, b + 1, key)
+
+    nowTime = array.size(g_hT) > 0 ? array.get(g_hT, array.size(g_hT) - 1) : time
+    shown = 0
+    for a = 0 to nZones - 1
+        if shown >= InpMaxZonesShown
+            break
+        z = array.get(g_zones, array.get(idx, a))
+        total = f_zoneTotal(z)
+        if not (z.isMitigated and not InpShowMitigated) and total >= InpMinZoneScoreToShow
+            isDemand = z.side == "demand"
+            col    = z.isMitigated ? InpMitigatedColor : (isDemand ? InpDemandColor : InpSupplyColor)
+            lblCol = z.isMitigated ? InpMitigatedColor : (isDemand ? InpDemandLabelColor : InpSupplyLabelColor)
+
+            dispTop    = z.zoneTop
+            dispBottom = z.zoneBottom
+            midPrice   = (dispTop + dispBottom) / 2.0
+            minHeight  = midPrice * (InpMinHeightPct / 100.0)
+            if InpMinHeightPct > 0 and (dispTop - dispBottom) < minHeight
+                pad = (minHeight - (dispTop - dispBottom)) / 2.0
+                dispTop    := dispTop + pad
+                dispBottom := dispBottom - pad
+
+            newBox = box.new(left = z.formedAt, top = dispTop, right = nowTime, bottom = dispBottom,
+                 border_color = col, bgcolor = col, border_width = z.isMitigated ? 1 : 2,
+                 border_style = z.isMitigated ? line.style_dotted : line.style_solid,
+                 xloc = xloc.bar_time)
+            array.push(g_boxes, newBox)
+
+            lblText = (isDemand ? "DEMANDE (" : "OFFRE (") + str.tostring(int(math.round(total))) + "/10)"
+            // style_label_right : la pointe est à droite (sur nowTime),
+            // le texte s'étend donc vers la GAUCHE — reste dans la zone
+            // visible au lieu de partir dans l'espace vide futur.
+            newLbl = label.new(x = nowTime, y = midPrice, text = lblText + " ",
+                 color = color.new(color.white, 100), textcolor = lblCol,
+                 style = label.style_label_right, size = size.normal,
+                 xloc = xloc.bar_time)
+            array.push(g_labels, newLbl)
+
+            shown := shown + 1
