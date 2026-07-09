@@ -6,9 +6,13 @@
 //| pour tracer sur le graphique exactement ce que la stratégie V4    |
 //| voit :                                                             |
 //|   - Zones Supply/Demand M15 (resamplées depuis M1, comme en prod, |
-//|     jamais CopyRates M15 direct — parité stricte avec ZeusP11)    |
+//|     jamais CopyRates M15 direct — parité stricte avec ZeusP11) —  |
+//|     PRIORITÉ VISUELLE : gros mots "DEMANDE"/"OFFRE" collés au     |
+//|     prix actuel, peu de zones affichées, seulement les valides.   |
 //|   - Patterns Wyckoff Accumulation -> Manipulation -> MSS détectés |
-//|     sur M1 (Spring/Upthrust + confirmation)                       |
+//|     sur M1 (Spring/Upthrust + confirmation) — désactivés par      |
+//|     défaut (InpShowWyckoff=false), à activer une fois les zones   |
+//|     bien comprises.                                                |
 //|                                                                    |
 //| Multi-timeframe : la détection tourne toujours sur le couple      |
 //| M1/M15 que le bot trade réellement, mais l'indicateur peut être   |
@@ -37,15 +41,18 @@ input int           InpWyckoffScanBars   = 1500;     // Profondeur de scan Wycko
 
 input group "Zones Supply/Demand (M15, resamplé depuis M1)"
 input bool          InpShowZones            = true;
-input double        InpMinZoneScoreToShow   = 0.0;   // 0 = toutes les zones détectées (score 0-10)
-input bool          InpShowMitigatedZones   = true;
-input int           InpMaxZonesShown        = 30;
-input color         InpDemandColor          = clrDeepSkyBlue;
-input color         InpSupplyColor          = clrIndianRed;
-input color         InpMitigatedColor       = clrSilver;
+input double        InpMinZoneScoreToShow   = 4.0;   // Ne montre que les zones déjà correctes (0 = toutes)
+input bool          InpShowMitigatedZones   = false;  // false = ne garde que les zones encore valides
+input int           InpMaxZonesShown        = 12;     // Peu de zones affichées = lecture immédiate
+input double        InpMinZoneHeightPct     = 0.05;   // Hauteur visuelle mini (% du prix) — évite les zones "fil de fer"
+input color         InpDemandColor          = clrLightSkyBlue;   // remplissage zone de demande (achat)
+input color         InpSupplyColor          = clrLightPink;       // remplissage zone d'offre (vente)
+input color         InpDemandLabelColor     = clrNavy;            // texte "DEMANDE" (contraste sur fond clair)
+input color         InpSupplyLabelColor     = clrDarkRed;         // texte "OFFRE"
+input color         InpMitigatedColor       = clrGainsboro;
 
-input group "Wyckoff (M1)"
-input bool          InpShowWyckoff           = true;
+input group "Wyckoff (M1) — désactivé par défaut, active une fois les zones bien comprises"
+input bool          InpShowWyckoff           = false;
 input double        InpMinWyckoffScoreToShow = 0.0;   // 0 = tous les patterns détectés (score 0-10)
 input int           InpMaxWyckoffShown       = 40;
 input color         InpDemandWyckoffColor    = clrDodgerBlue;
@@ -198,7 +205,10 @@ void DrawZones()
       idx[b + 1] = key;
      }
 
-   datetime now_time = TimeCurrent();
+   // g_last_processed (dernière barre M1 close) plutôt que TimeCurrent() :
+   // évite d'étendre les zones/étiquettes dans une zone sans bougies
+   // (week-end, hors session) où elles seraient invisibles à l'écran.
+   datetime now_time = g_last_processed;
    int shown = 0;
    for(int a = 0; a < g_state.n_zones && shown < InpMaxZonesShown; a++)
      {
@@ -211,27 +221,51 @@ void DrawZones()
 
       bool   is_demand = (z.side == PIVOT_DEMAND);
       color  col       = z.is_mitigated ? InpMitigatedColor : (is_demand ? InpDemandColor : InpSupplyColor);
+      color  lbl_col   = z.is_mitigated ? InpMitigatedColor : (is_demand ? InpDemandLabelColor : InpSupplyLabelColor);
       string name      = ZV_PREFIX_ZONE + IntegerToString((int)z.formed_at) + "_" + (is_demand ? "D" : "S");
 
-      ObjectCreate(0, name, OBJ_RECTANGLE, 0, z.formed_at, z.zone_top, now_time, z.zone_bottom);
+      // Hauteur visuelle minimum : une zone dont le corps de bougie pivot
+      // est très fin par rapport à l'échelle du graphique s'afficherait
+      // sinon comme un simple trait — le padding est purement visuel,
+      // le tooltip et le score gardent les vraies bornes de la zone.
+      double disp_top = z.zone_top, disp_bottom = z.zone_bottom;
+      double mid_price0 = (disp_top + disp_bottom) / 2.0;
+      double min_height = mid_price0 * (InpMinZoneHeightPct / 100.0);
+      if(InpMinZoneHeightPct > 0 && (disp_top - disp_bottom) < min_height)
+        {
+         double pad = (min_height - (disp_top - disp_bottom)) / 2.0;
+         disp_top    += pad;
+         disp_bottom -= pad;
+        }
+
+      // Rectangle : grand aplat de couleur claire, bord net, toujours
+      // derrière les bougies (BACK=true) pour ne jamais masquer le prix.
+      ObjectCreate(0, name, OBJ_RECTANGLE, 0, z.formed_at, disp_top, now_time, disp_bottom);
       ObjectSetInteger(0, name, OBJPROP_COLOR, col);
       ObjectSetInteger(0, name, OBJPROP_FILL, !z.is_mitigated);
       ObjectSetInteger(0, name, OBJPROP_STYLE, z.is_mitigated ? STYLE_DOT : STYLE_SOLID);
-      ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, name, OBJPROP_WIDTH, z.is_mitigated ? 1 : 2);
       ObjectSetInteger(0, name, OBJPROP_BACK, true);
       ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
       string tip = StringFormat(
-         "%s score=%.1f (BOS %.1f Impuls %.1f Temps %.1f Fraîcheur %.1f Sweep %.1f) touches=%d%s",
-         is_demand ? "DEMAND" : "SUPPLY", total, z.s_bos, z.s_impulse, z.s_time, z.s_fresh, z.s_sweep,
-         z.touch_count, z.is_mitigated ? " [mitigée]" : "");
+         "%s — score %.1f/10 (BOS %.1f Impulsion %.1f Temps %.1f Fraîcheur %.1f Sweep %.1f)\ntouchée %d fois%s",
+         is_demand ? "ZONE DE DEMANDE" : "ZONE D'OFFRE", total,
+         z.s_bos, z.s_impulse, z.s_time, z.s_fresh, z.s_sweep,
+         z.touch_count, z.is_mitigated ? " — mitigée (déjà traversée)" : " — encore valide");
       ObjectSetString(0, name, OBJPROP_TOOLTIP, tip);
 
+      // Étiquette : mot complet, gros, positionnée au bord DROIT de la
+      // zone (côté prix actuel) pour être visible sans avoir à remonter
+      // dans l'historique — c'est ce qu'on regarde en premier sur le graphique.
       string lbl = name + "_lbl";
-      ObjectCreate(0, lbl, OBJ_TEXT, 0, z.formed_at, is_demand ? z.zone_bottom : z.zone_top);
-      ObjectSetString(0, lbl, OBJPROP_TEXT, StringFormat("%s %.1f", is_demand ? "D" : "S", total));
-      ObjectSetInteger(0, lbl, OBJPROP_COLOR, col);
-      ObjectSetInteger(0, lbl, OBJPROP_FONTSIZE, 8);
-      ObjectSetInteger(0, lbl, OBJPROP_ANCHOR, is_demand ? ANCHOR_LEFT_UPPER : ANCHOR_LEFT_LOWER);
+      double mid_price = (z.zone_top + z.zone_bottom) / 2.0;
+      ObjectCreate(0, lbl, OBJ_TEXT, 0, now_time, mid_price);
+      ObjectSetString(0, lbl, OBJPROP_TEXT,
+                       StringFormat(" %s (%.0f/10)", is_demand ? "DEMANDE" : "OFFRE", total));
+      ObjectSetInteger(0, lbl, OBJPROP_COLOR, lbl_col);
+      ObjectSetInteger(0, lbl, OBJPROP_FONTSIZE, 10);
+      ObjectSetString(0, lbl, OBJPROP_FONT, "Arial Bold");
+      ObjectSetInteger(0, lbl, OBJPROP_ANCHOR, ANCHOR_RIGHT);
       ObjectSetInteger(0, lbl, OBJPROP_SELECTABLE, false);
 
       shown++;

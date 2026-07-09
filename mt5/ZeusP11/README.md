@@ -12,13 +12,20 @@ réutilisant sans aucune modification la détection déjà validée
 (`ZeusZones.mqh` + `ZeusWyckoff.mqh` via `ZeusSignals.mqh`) :
 
 - **Zones Supply/Demand** (rectangles), calculées sur M15 resamplé depuis M1
-  — jamais `CopyRates` M15 direct, parité stricte avec l'EA. Zones actives en
-  couleur pleine, zones mitigées en pointillés grisés (configurable).
+  — jamais `CopyRates` M15 direct, parité stricte avec l'EA. Priorité à la
+  lisibilité immédiate : gros mot **"DEMANDE"**/**"OFFRE"** collé au prix
+  actuel (pas besoin de remonter dans l'historique pour lire l'étiquette),
+  peu de zones affichées par défaut (`InpMaxZonesShown=12`, seulement les
+  zones encore valides et déjà correctes, `InpMinZoneScoreToShow=4`). Le
+  détail du score (BOS/impulsion/temps/fraîcheur/sweep) reste disponible au
+  survol de la zone, sans encombrer le graphique.
 - **Patterns Wyckoff** (Accumulation → Manipulation → MSS) détectés sur M1 :
   flèche sur la barre de Spring/Upthrust, flèche + étiquette de score sur la
   barre de confirmation MSS, boîte d'accumulation en arrière-plan. Les
   patterns dont le score dépasse le seuil de signal de production
   (`InpXauWSLong/Short`, `InpFxWSLong/Short`) sont marqués `[SIGNAL]`.
+  **Désactivé par défaut** (`InpShowWyckoff=false`) pour ne pas surcharger la
+  première lecture — à activer une fois les zones bien comprises.
 
 **Multi-timeframe** : la détection tourne toujours sur le couple M1/M15 que
 le bot trade réellement, mais l'indicateur peut être posé sur n'importe quel
