@@ -9,7 +9,7 @@ production (`zeus/strategy/supply_demand/zone_detector.py` /
 ## Ce qu'il fait
 
 - Score de bougie pivot (demande/offre) sur 10, calculé sur le timeframe
-  choisi (`InpZoneTF`, M15 par défaut — comme en production).
+  de détection (voir "Multi-timeframe" ci-dessous).
 - Recherche d'une cassure de structure (BOS) après chaque pivot valide.
 - Score de zone sur 10 = BOS + Impulsion + Temps + Fraîcheur + Sweep.
 - Suivi de mitigation : une zone traversée à la clôture perd sa validité et
@@ -18,9 +18,12 @@ production (`zeus/strategy/supply_demand/zone_detector.py` /
   zones affichées, seulement les valides et déjà correctes, gros mot
   **"DEMANDE"/"OFFRE"** collé au prix actuel.
 
-**Multi-timeframe** : la détection tourne sur `InpZoneTF` (M15 par défaut)
-récupéré via `request.security()` en mode non-repaint, quel que soit le
-graphique sur lequel l'indicateur est posé.
+**Multi-timeframe** : par défaut (`InpUseChartTF = true`), la détection
+tourne sur le **timeframe du graphique lui-même** — passe le graphique en
+M15, H1, H4... et les zones se recalculent pour ce timeframe, comme un
+indicateur Supply/Demand classique. Décoche `InpUseChartTF` pour figer la
+détection sur un timeframe fixe (`InpZoneTF`, M15 par défaut = celui de la
+stratégie de production) quel que soit le graphique affiché.
 
 ## Ce qu'il ne fait PAS (encore)
 
@@ -52,10 +55,16 @@ fermée.
 
 ## Différences connues vs MQL5/Python
 
-- Le calcul tourne sur `InpZoneTF` directement (M15 par défaut) via
+- Le calcul tourne directement sur le timeframe de détection (celui du
+  graphique par défaut, ou `InpZoneTF` en mode fixe) via
   `request.security()`, plutôt que sur un resampling M1→M15 manuel comme
   le fait l'EA MQL5 pour la parité stricte avec le moteur Python. Sur la
   plupart des brokers/flux, le M15 natif de TradingView et le M15
   resamplé depuis M1 doivent coïncider, mais une divergence est possible
   si le flux de données diffère (mêmes réserves que documentées dans
   `mt5/ZeusP11/README.md`).
+- En mode par défaut (`InpUseChartTF = true`), les zones affichées ne
+  correspondent plus forcément à celles que la stratégie de production
+  utilise réellement (toujours M15) — décoche `InpUseChartTF` si tu veux
+  retrouver exactement les zones de production quel que soit le
+  graphique.

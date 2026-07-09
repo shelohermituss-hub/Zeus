@@ -9,11 +9,12 @@
 //   - Score de zone sur 10 = BOS + Impulsion + Temps + Fraîcheur + Sweep.
 //   - Suivi de mitigation (une zone traversée à la clôture perd sa validité).
 //
-// Multi-timeframe : la détection tourne sur le timeframe choisi par
-// InpZoneTF (M15 par défaut, comme en production), récupéré via
-// request.security() en mode non-repaint — l'indicateur peut être posé
-// sur n'importe quel graphique (M1 à H4), la détection reste basée sur
-// les mêmes bougies M15 quel que soit le graphique hôte.
+// Multi-timeframe : par défaut (InpUseChartTF=true), la détection tourne
+// sur le timeframe DU GRAPHIQUE lui-même — passe le graphique en M15,
+// H1, H4... et les zones se recalculent pour CE timeframe, comme un
+// indicateur Supply/Demand classique. Décoche InpUseChartTF pour figer
+// la détection sur un timeframe fixe (InpZoneTF, M15 par défaut = celui
+// de la stratégie de production) quel que soit le graphique affiché.
 //
 // Priorité à la lisibilité (retour utilisateur sur la version MQL5) :
 // peu de zones affichées par défaut, seulement les valides et déjà
@@ -33,9 +34,17 @@ indicator("ZeusVision — Zones Supply/Demand", overlay = true,
 
 // ── Inputs ────────────────────────────────────────────────────────
 grp_gen = "Général"
-InpZoneTF         = input.timeframe("15", "Timeframe des zones (M15 = production)", group = grp_gen)
+InpUseChartTF     = input.bool(true, "Zones sur le timeframe du graphique (change si tu changes de graphique)", group = grp_gen)
+InpZoneTF         = input.timeframe("15", "Timeframe des zones fixe (utilisé seulement si l'option ci-dessus est décochée)", group = grp_gen)
 InpMaxHtfBars     = input.int(1500, "Barres HTF conservées en mémoire", minval = 200, maxval = 5000, group = grp_gen)
 InpMaxZonesStored = input.int(300, "Zones conservées avant purge des mitigées", minval = 20, group = grp_gen)
+
+// Timeframe effectivement utilisé pour la détection : celui du graphique
+// par défaut (l'indicateur "suit" le zoom choisi), ou une valeur fixe si
+// InpUseChartTF est décoché (comportement de la version précédente,
+// utile pour toujours voir les zones M15 de production quel que soit
+// le graphique).
+zoneTF = InpUseChartTF ? timeframe.period : InpZoneTF
 
 grp_zone = "Affichage des zones"
 InpMinZoneScoreToShow = input.float(4.0, "Score minimum affiché (0-10)", minval = 0.0, maxval = 10.0, group = grp_zone)
@@ -333,7 +342,7 @@ var array<box>    g_boxes  = array.new<box>()
 var array<label>  g_labels = array.new<label>()
 
 // ── Fetch HTF non-repaint (idiome standard : offset [1]) ────────────
-[htfTime, htfOpen, htfHigh, htfLow, htfClose] = request.security(syminfo.tickerid, InpZoneTF, [time, open, high, low, close], lookahead = barmerge.lookahead_off)
+[htfTime, htfOpen, htfHigh, htfLow, htfClose] = request.security(syminfo.tickerid, zoneTF, [time, open, high, low, close], lookahead = barmerge.lookahead_off)
 newHtfBar = htfTime != htfTime[1]
 
 if newHtfBar and not na(htfTime[1])
