@@ -33,8 +33,9 @@ indicator("ZeusVision — Zones Supply/Demand", overlay = true,
 
 // ── Inputs ────────────────────────────────────────────────────────
 grp_gen = "Général"
-InpZoneTF        = input.timeframe("15", "Timeframe des zones (M15 = production)", group = grp_gen)
-InpMaxHtfBars    = input.int(1500, "Barres HTF conservées en mémoire", minval = 200, maxval = 5000, group = grp_gen)
+InpZoneTF         = input.timeframe("15", "Timeframe des zones (M15 = production)", group = grp_gen)
+InpMaxHtfBars     = input.int(1500, "Barres HTF conservées en mémoire", minval = 200, maxval = 5000, group = grp_gen)
+InpMaxZonesStored = input.int(300, "Zones conservées avant purge des mitigées", minval = 20, group = grp_gen)
 
 grp_zone = "Affichage des zones"
 InpMinZoneScoreToShow = input.float(4.0, "Score minimum affiché (0-10)", minval = 0.0, maxval = 10.0, group = grp_zone)
@@ -135,22 +136,12 @@ f_analyzeCandle(o, h, l, c) =>
         score := scoreS
     [side, score, bodyH, bodyL]
 
-// ── ATR (rolling mean, min_periods=1 — port de ZeusComputeATR) ──────
-f_computeATR(h, l, c, n, period) =>
-    tr  = array.new<float>(n, 0.0)
-    atr = array.new<float>(n, 0.0)
-    for i = 0 to n - 1
-        hl = array.get(h, i) - array.get(l, i)
-        trVal = i == 0 ? hl : math.max(hl, math.max(math.abs(array.get(h, i) - array.get(c, i - 1)), math.abs(array.get(l, i) - array.get(c, i - 1))))
-        array.set(tr, i, trVal)
-    sum = 0.0
-    for i = 0 to n - 1
-        sum := sum + array.get(tr, i)
-        if i >= period
-            sum := sum - array.get(tr, i - period)
-        cnt = i < period ? i + 1 : period
-        array.set(atr, i, sum / cnt)
-    atr
+// ATR (rolling mean, min_periods=1 — port de ZeusComputeATR) : maintenu
+// de façon INCRÉMENTALE (voir plus bas, une valeur ajoutée par nouvelle
+// barre) plutôt que recalculé sur tout le tampon à chaque appel — un
+// recalcul complet à chaque barre coûtait O(n) à chaque fois, soit O(n²)
+// sur tout l'historique du graphique, largement au-delà du budget
+// d'exécution de Pine (d'où l'erreur "script takes too long to execute").
 
 // ── Swing detection (port de ZeusIsSwingLow/High) ───────────────────
 f_isSwingLow(l, n, i, lb) =>
@@ -171,39 +162,28 @@ f_isSwingHigh(h, n, i, lb) =>
             mx := array.get(h, k)
     array.get(h, i) >= mx
 
-// ── BOS detection (port de ZeusFindBullishBOS/BearishBOS) ───────────
-// Retourne [bosBar, bosLevel] ; bosBar == -1 si non trouvé.
-f_findBullishBOS(h, c, n, pivotBar, bosLookback, bosMaxBars) =>
-    lbStart = math.max(0, pivotBar - bosLookback)
-    lvl = -1e18
-    for k = lbStart to pivotBar - 1
-        if array.get(h, k) > lvl
-            lvl := array.get(h, k)
-    bosBar   = -1
-    bosLevel = 0.0
-    if lvl > -1e18
-        endK = math.min(n, pivotBar + bosMaxBars + 1)
-        for j = pivotBar + 1 to endK - 1
-            if bosBar == -1 and array.get(c, j) > lvl
-                bosBar   := j
-                bosLevel := lvl
-    [bosBar, bosLevel]
-
-f_findBearishBOS(l, c, n, pivotBar, bosLookback, bosMaxBars) =>
-    lbStart = math.max(0, pivotBar - bosLookback)
-    lvl = 1e18
-    for k = lbStart to pivotBar - 1
-        if array.get(l, k) < lvl
-            lvl := array.get(l, k)
-    bosBar   = -1
-    bosLevel = 0.0
-    if lvl < 1e18
-        endK = math.min(n, pivotBar + bosMaxBars + 1)
-        for j = pivotBar + 1 to endK - 1
-            if bosBar == -1 and array.get(c, j) < lvl
-                bosBar   := j
-                bosLevel := lvl
-    [bosBar, bosLevel]
+// ── Niveau BOS (port de la moitié "recherche du niveau" de
+// ZeusFindBullishBOS/BearishBOS — la recherche FORWARD de la cassure
+// n'est plus un scan ici : un pivot ne peut casser la structure que sur
+// des barres qui n'existent pas encore au moment où il devient
+// vérifiable (jusqu'à bosMaxBars = 40-80 barres plus tard), donc elle
+// est faite de façon incrémentale, une barre à la fois, via la file
+// d'attente g_pending plus bas — pas de scan répété nécessaire).
+// Retourne na si aucune barre disponible pour établir le niveau.
+f_scanLevel(h, l, pivotI, bosLookback, isDemand) =>
+    lbStart = math.max(0, pivotI - bosLookback)
+    lvl = isDemand ? -1e18 : 1e18
+    ok = false
+    if lbStart < pivotI
+        for k = lbStart to pivotI - 1
+            if isDemand
+                if array.get(h, k) > lvl
+                    lvl := array.get(h, k)
+            else
+                if array.get(l, k) < lvl
+                    lvl := array.get(l, k)
+        ok := true
+    [ok, lvl]
 
 // ── Scoring (port de ZeusScoreBOS/Impulse/Time/Sweep) ───────────────
 f_scoreBOS(c, atr, bosBar, bosLevel, isDemand) =>
@@ -274,75 +254,52 @@ f_findBaseStart(h, l, atr, pivotBar, maxBaseCandles) =>
                 break
     result
 
-// ── Scan complet (port de ZeusDetectZones) ───────────────────────────
-// Retourne un array<SDZone> des zones fraîchement détectées sur la
-// fenêtre HTF courante (dédup interne au batch, comme ZeusIsDuplicate).
-f_detectZones(t, o, h, l, c, n) =>
-    result = array.new<SDZone>()
-    if n >= InpSwingLookback * 2 + 2
-        atr = f_computeATR(h, l, c, n, InpAtrPeriod)
-        lo    = InpSwingLookback
-        hiLim = n - 1
-        if hiLim > lo
-            for i = lo to hiLim - 1
-                [pcSide, pcScore, pcBodyH, pcBodyL] = f_analyzeCandle(array.get(o, i), array.get(h, i), array.get(l, i), array.get(c, i))
-                if pcScore >= InpMinPivotScore and pcBodyH > pcBodyL
-                    isDemand = pcSide == "demand"
-                    isSupply = pcSide == "supply"
-                    bosBar   = -1
-                    bosLevel = 0.0
-                    if isDemand and f_isSwingLow(l, n, i, InpSwingLookback)
-                        [bb, bl] = f_findBullishBOS(h, c, n, i, InpBosLookback, InpBosMaxBarsDemand)
-                        bosBar   := bb
-                        bosLevel := bl
-                    else if isSupply and f_isSwingHigh(h, n, i, InpSwingLookback)
-                        [bb, bl] = f_findBearishBOS(l, c, n, i, InpBosLookback, InpBosMaxBarsSupply)
-                        bosBar   := bb
-                        bosLevel := bl
-                    if bosBar != -1
-                        baseStart   = f_findBaseStart(h, l, atr, i, InpMaxBaseCandles)
-                        baseCandles = i - baseStart + 1
-                        sBos    = f_scoreBOS(c, atr, bosBar, bosLevel, isDemand)
-                        sImp    = f_scoreImpulse(o, h, l, c, i, bosBar)
-                        sTime   = f_scoreTime(baseCandles)
-                        sSweep  = f_scoreSweep(h, l, c, i, isDemand, InpSweepLookback)
-                        sFresh  = 2.0
-                        total   = sBos + sImp + sTime + sFresh + sSweep
-                        if total >= InpMinZoneScoreDetect
-                            newZone = SDZone.new(
-                                 side = isDemand ? "demand" : "supply",
-                                 zoneTop = pcBodyH, zoneBottom = pcBodyL,
-                                 wickExtreme = isDemand ? array.get(l, i) : array.get(h, i),
-                                 formedAt = array.get(t, bosBar),
-                                 sBos = sBos, sImpulse = sImp, sTimeScore = sTime,
-                                 sFresh = sFresh, sSweep = sSweep,
-                                 isMitigated = false, touchCount = 0)
-                            dup = false
-                            if array.size(result) > 0
-                                for zi = 0 to array.size(result) - 1
-                                    ez = array.get(result, zi)
-                                    if ez.side == newZone.side
-                                        dist = math.abs((ez.zoneTop + ez.zoneBottom) / 2.0 - (newZone.zoneTop + newZone.zoneBottom) / 2.0)
-                                        refH = math.min(ez.zoneTop - ez.zoneBottom, newZone.zoneTop - newZone.zoneBottom)
-                                        if refH >= 1e-8 and dist < refH * 0.5
-                                            dup := true
-                            if not dup
-                                array.push(result, newZone)
-    result
+// ── Détection INCRÉMENTALE via file d'attente de pivots ──────────────
+// Contrairement au MQL5 (qui peut se permettre de rescanner tout le
+// tampon à chaque barre M1, sans budget d'exécution strict), Pine limite
+// le temps d'exécution total du script sur tout l'historique du
+// graphique — un rescan complet à chaque nouvelle barre coûterait O(n²).
+//
+// Un pivot à l'indice i n'est vérifiable (fenêtre swing [i-lb, i+lb]
+// complète) qu'une fois i+lb <= n-1, donc au plus tôt à i = n-1-lb —
+// c'est le seul nouveau candidat par barre. Mais sa cassure de
+// structure (BOS) peut survenir jusqu'à bosMaxBars (40-80) barres PLUS
+// TARD, qui n'existent pas encore à ce moment — impossible de la
+// chercher en un seul passage. Le niveau à casser (backward scan sur
+// bosLookback barres) est calculé UNE FOIS quand le pivot est détecté,
+// puis le pivot est mis en file d'attente (g_pending) ; à chaque
+// nouvelle barre, un simple test O(1) par entrée en attente ("la
+// clôture vient-elle de casser le niveau ?") détermine si le BOS vient
+// de se produire, jusqu'à expiration après bosMaxBars barres.
+type PendingPivot
+    int    pivotI
+    string side
+    float  level
+    float  bodyH
+    float  bodyL
+    int    expiryI       // dernier index n15 où le BOS est encore recherché
 
-// Fusionne les zones fraîches dans l'état persistant (port de ZeusMergeZones)
-f_mergeZones(persistZones, freshZones) =>
-    if array.size(freshZones) > 0
-        for fi = 0 to array.size(freshZones) - 1
-            fz = array.get(freshZones, fi)
-            known = false
-            if array.size(persistZones) > 0
-                for zi = 0 to array.size(persistZones) - 1
-                    ez = array.get(persistZones, zi)
-                    if ez.formedAt == fz.formedAt and ez.side == fz.side and math.abs(ez.zoneBottom - fz.zoneBottom) < 1e-9
-                        known := true
-            if not known
-                array.push(persistZones, fz)
+f_finalizeZone(t, o, h, l, c, atr, pivotI, bodyH, bodyL, side, bosBar, bosLevel) =>
+    isDemand    = side == "demand"
+    baseStart   = f_findBaseStart(h, l, atr, pivotI, InpMaxBaseCandles)
+    baseCandles = pivotI - baseStart + 1
+    sBos    = f_scoreBOS(c, atr, bosBar, bosLevel, isDemand)
+    sImp    = f_scoreImpulse(o, h, l, c, pivotI, bosBar)
+    sTime   = f_scoreTime(baseCandles)
+    sSweep  = f_scoreSweep(h, l, c, pivotI, isDemand, InpSweepLookback)
+    sFresh  = 2.0
+    total   = sBos + sImp + sTime + sFresh + sSweep
+    found   = total >= InpMinZoneScoreDetect
+    zone = SDZone.new(isMitigated = true)  // sentinelle si found=false
+    if found
+        zone := SDZone.new(
+             side = side, zoneTop = bodyH, zoneBottom = bodyL,
+             wickExtreme = isDemand ? array.get(l, pivotI) : array.get(h, pivotI),
+             formedAt = array.get(t, bosBar),
+             sBos = sBos, sImpulse = sImp, sTimeScore = sTime,
+             sFresh = sFresh, sSweep = sSweep,
+             isMitigated = false, touchCount = 0)
+    [found, zone]
 
 // Met à jour touches/mitigation sur une nouvelle barre HTF close
 // (port de ZeusUpdateZonesOnBar).
@@ -362,12 +319,16 @@ f_updateZonesOnBar(persistZones, barLow, barHigh, barClose, barTime) =>
                         z.sFresh := 1.0
 
 // ── État persistant ───────────────────────────────────────────────
-var array<SDZone> g_zones = array.new<SDZone>()
+var array<SDZone>       g_zones   = array.new<SDZone>()
+var array<PendingPivot> g_pending = array.new<PendingPivot>()  // pivots en attente de leur BOS
 var array<int>    g_hT = array.new<int>()
 var array<float>  g_hO = array.new<float>()
 var array<float>  g_hH = array.new<float>()
 var array<float>  g_hL = array.new<float>()
 var array<float>  g_hC = array.new<float>()
+var array<float>  g_tr  = array.new<float>()   // True Range par barre (pour l'ATR incrémental)
+var array<float>  g_atr = array.new<float>()   // ATR incrémental, même longueur que g_hT
+var float          g_atrSum = 0.0              // somme glissante des TR (fenêtre InpAtrPeriod)
 var array<box>    g_boxes  = array.new<box>()
 var array<label>  g_labels = array.new<label>()
 
@@ -379,23 +340,120 @@ if newHtfBar and not na(htfTime[1])
     // La barre qui vient de se clôturer est celle vue à l'itération
     // précédente (htfTime[1]/htfOpen[1]/...), puisque htfTime ne change
     // qu'au tout début de la barre HTF SUIVANTE.
-    array.push(g_hT, int(htfTime[1]))
-    array.push(g_hO, htfOpen[1])
-    array.push(g_hH, htfHigh[1])
-    array.push(g_hL, htfLow[1])
-    array.push(g_hC, htfClose[1])
+    newT = int(htfTime[1])
+    newO = htfOpen[1]
+    newH = htfHigh[1]
+    newL = htfLow[1]
+    newC = htfClose[1]
+
+    // TR incrémental (port de ZeusComputeATR, une valeur par barre)
+    prevIdx = array.size(g_hC) - 1
+    hl      = newH - newL
+    trVal   = prevIdx < 0 ? hl : math.max(hl, math.max(math.abs(newH - array.get(g_hC, prevIdx)), math.abs(newL - array.get(g_hC, prevIdx))))
+
+    array.push(g_hT, newT)
+    array.push(g_hO, newO)
+    array.push(g_hH, newH)
+    array.push(g_hL, newL)
+    array.push(g_hC, newC)
+    array.push(g_tr, trVal)
+
+    // Somme glissante sur InpAtrPeriod barres (min_periods=1, comme pandas)
+    g_atrSum := g_atrSum + trVal
+    if array.size(g_tr) > InpAtrPeriod
+        g_atrSum := g_atrSum - array.get(g_tr, array.size(g_tr) - 1 - InpAtrPeriod)
+    atrCnt = math.min(array.size(g_tr), InpAtrPeriod)
+    array.push(g_atr, g_atrSum / atrCnt)
+
     if array.size(g_hT) > InpMaxHtfBars
         array.shift(g_hT)
         array.shift(g_hO)
         array.shift(g_hH)
         array.shift(g_hL)
         array.shift(g_hC)
+        array.shift(g_tr)
+        array.shift(g_atr)
+        // g_pending référence des index DANS le tampon — après un shift
+        // (suppression du plus ancien élément), tout index stocké doit
+        // être décalé de -1 pour rester valide.
+        if array.size(g_pending) > 0
+            for pi = 0 to array.size(g_pending) - 1
+                pp = array.get(g_pending, pi)
+                pp.pivotI  := pp.pivotI - 1
+                pp.expiryI := pp.expiryI - 1
 
     n15 = array.size(g_hT)
-    if n15 >= InpSwingLookback * 2 + 2
-        freshZones = f_detectZones(g_hT, g_hO, g_hH, g_hL, g_hC, n15)
-        f_mergeZones(g_zones, freshZones)
+
+    // Nouveau candidat pivot : celui dont la fenêtre swing [i-lb, i+lb]
+    // vient tout juste de devenir complète — seul index qui n'a pas pu
+    // être vérifié avant. Un pivot donné n'est ainsi jamais réévalué :
+    // pas de dédup/merge nécessaire.
+    pivotI = n15 - 1 - InpSwingLookback
+    if pivotI >= InpSwingLookback
+        [pcSide, pcScore, pcBodyH, pcBodyL] = f_analyzeCandle(array.get(g_hO, pivotI), array.get(g_hH, pivotI), array.get(g_hL, pivotI), array.get(g_hC, pivotI))
+        if pcScore >= InpMinPivotScore and pcBodyH > pcBodyL
+            isDemand = pcSide == "demand"
+            isSupply = pcSide == "supply"
+            sideOk   = false
+            level    = 0.0
+            maxBarsForSide = 0
+            if isDemand and f_isSwingLow(g_hL, n15, pivotI, InpSwingLookback)
+                [ok, lvl] = f_scanLevel(g_hH, g_hL, pivotI, InpBosLookback, true)
+                sideOk := ok
+                level := lvl
+                maxBarsForSide := InpBosMaxBarsDemand
+            else if isSupply and f_isSwingHigh(g_hH, n15, pivotI, InpSwingLookback)
+                [ok, lvl] = f_scanLevel(g_hH, g_hL, pivotI, InpBosLookback, false)
+                sideOk := ok
+                level := lvl
+                maxBarsForSide := InpBosMaxBarsSupply
+            if sideOk
+                expiryI  = pivotI + maxBarsForSide
+                resolved = false
+                // Rattrapage : la fenêtre [pivotI+1, n15-1] (<= swingLookback
+                // barres) n'a encore jamais pu être vérifiée — elle est
+                // déjà entièrement dans le tampon, donc bon marché à scanner.
+                for j = pivotI + 1 to n15 - 1
+                    if not resolved
+                        cj    = array.get(g_hC, j)
+                        broke = isDemand ? cj > level : cj < level
+                        if broke
+                            [found, zone] = f_finalizeZone(g_hT, g_hO, g_hH, g_hL, g_hC, g_atr, pivotI, pcBodyH, pcBodyL, isDemand ? "demand" : "supply", j, level)
+                            if found
+                                array.push(g_zones, zone)
+                            resolved := true
+                if not resolved and (n15 - 1) < expiryI
+                    array.push(g_pending, PendingPivot.new(pivotI = pivotI, side = isDemand ? "demand" : "supply", level = level, bodyH = pcBodyH, bodyL = pcBodyL, expiryI = expiryI))
+
+    // Résolution de la file d'attente : la cassure vient-elle de se
+    // produire sur CETTE barre (test O(1) par entrée), ou l'entrée a-t-elle
+    // expiré (bosMaxBars dépassé sans cassure) ?
+    if array.size(g_pending) > 0
+        keepPending = array.new<PendingPivot>()
+        for pi = 0 to array.size(g_pending) - 1
+            pp = array.get(g_pending, pi)
+            ppIsDemand = pp.side == "demand"
+            broke = ppIsDemand ? newC > pp.level : newC < pp.level
+            if broke
+                [found, zone] = f_finalizeZone(g_hT, g_hO, g_hH, g_hL, g_hC, g_atr, pp.pivotI, pp.bodyH, pp.bodyL, pp.side, n15 - 1, pp.level)
+                if found
+                    array.push(g_zones, zone)
+            else if (n15 - 1) < pp.expiryI
+                array.push(keepPending, pp)
+        g_pending := keepPending
+
+    if n15 > 0
         f_updateZonesOnBar(g_zones, array.get(g_hL, n15 - 1), array.get(g_hH, n15 - 1), array.get(g_hC, n15 - 1), array.get(g_hT, n15 - 1))
+
+    // Purge : borne la taille de g_zones en retirant les zones mitigées
+    // une fois le tampon plein (comme ZeusPruneZones côté MQL5).
+    if array.size(g_zones) > InpMaxZonesStored
+        prunedZones = array.new<SDZone>()
+        for zi = 0 to array.size(g_zones) - 1
+            zz = array.get(g_zones, zi)
+            if not zz.isMitigated
+                array.push(prunedZones, zz)
+        g_zones := prunedZones
 
     // ── Redessin (delete-all puis recréation, comme la version MQL5) ──
     if array.size(g_boxes) > 0
