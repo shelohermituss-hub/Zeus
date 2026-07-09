@@ -25,11 +25,22 @@ indicateur Supply/Demand classique. Décoche `InpUseChartTF` pour figer la
 détection sur un timeframe fixe (`InpZoneTF`, M15 par défaut = celui de la
 stratégie de production) quel que soit le graphique affiché.
 
-## Ce qu'il ne fait PAS (encore)
+- **Retracement Fibonacci** sur le swing de chaque zone affichée
+  (`InpShowFibonacci`) : niveaux 23.6/38.2/50/61.8/78.6%, avec la zone OTE
+  (61.8-78.6%, la "golden pocket") surlignée (`InpShowOteZone`).
+- **Pattern Wyckoff** (Accumulation → Manipulation/Spring-Upthrust → MSS,
+  `InpShowWyckoff`) : boîte d'accumulation, flèche sur le spring/upthrust,
+  étiquette "MSS X/10" sur la barre de confirmation. Port incrémental de
+  `ZeusWyckoff.mqh` — une accumulation candidate par barre, résolue via
+  une file d'attente à 2 états (recherche du spring, puis du MSS) pour
+  rester rapide sur un long historique (voir "Statut de validation").
 
-Le pattern Wyckoff (Accumulation → Manipulation → MSS) n'est pas inclus
-dans cette première version — il est désactivé par défaut dans la version
-MQL5 également. Peut être ajouté en suivi si besoin.
+## Limite connue (approximation assumée)
+
+La boîte d'accumulation Wyckoff est une approximation visuelle (son début
+est dérivé du nombre de barres d'accumulation, pas de la fenêtre exacte
+utilisée par le scoring) — mêmes réserves que la version MQL5. Le spring,
+le MSS et le score restent exacts.
 
 ## Installation
 

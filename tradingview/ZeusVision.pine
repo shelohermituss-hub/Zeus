@@ -20,9 +20,14 @@
 // peu de zones affichées par défaut, seulement les valides et déjà
 // correctes, gros mot "DEMANDE"/"OFFRE" collé au prix actuel.
 //
-// Le pattern Wyckoff (Accumulation -> Manipulation -> MSS) n'est PAS
-// inclus dans cette première version Pine — il est désactivé par défaut
-// dans la version MQL5 également ; peut être ajouté en suivi si besoin.
+// En plus des zones S&D :
+//   - Retracement Fibonacci tracé sur le swing de chaque zone affichée
+//     (wickExtreme = 0%, extrémité opposée de l'impulsion = 100%),
+//     avec la zone OTE (61.8%-78.6%) surlignée.
+//   - Pattern Wyckoff (Accumulation -> Manipulation/Spring-Upthrust ->
+//     MSS), port incrémental de ZeusWyckoff.mqh : une accumulation
+//     candidate par barre, résolue via une file d'attente à 2 états
+//     (recherche du spring, puis du MSS) pour rester O(1) par barre.
 //
 // ⚠️ Non testé en compilation dans cet environnement (pas d'accès à
 // l'éditeur Pine de TradingView ici) — chaque fonction a été relue
@@ -30,7 +35,7 @@
 // réelle dans TradingView reste nécessaire avant usage. Renvoie-moi les
 // éventuelles erreurs de compilation pour que je corrige.
 indicator("ZeusVision — Zones Supply/Demand", overlay = true,
-     max_boxes_count = 500, max_labels_count = 500)
+     max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
 
 // ── Inputs ────────────────────────────────────────────────────────
 grp_gen = "Général"
@@ -57,6 +62,28 @@ InpDemandLabelColor   = input.color(color.navy, "Couleur texte DEMANDE", group =
 InpSupplyLabelColor   = input.color(color.maroon, "Couleur texte OFFRE", group = grp_zone)
 InpMitigatedColor     = input.color(color.new(color.gray, 88), "Couleur zone mitigée", group = grp_zone)
 
+grp_fib = "Retracement Fibonacci (sur le swing de chaque zone)"
+InpShowFibonacci  = input.bool(true, "Afficher le retracement Fibonacci sur les zones affichées", group = grp_fib)
+InpShowOteZone    = input.bool(true, "Surligner la zone OTE (61.8%-78.6%, la \"golden pocket\")", group = grp_fib)
+InpFibColor       = input.color(color.new(color.gray, 40), "Couleur des niveaux Fibonacci", group = grp_fib)
+InpOteColor       = input.color(color.new(color.yellow, 85), "Couleur de la zone OTE", group = grp_fib)
+
+grp_wy = "Pattern Wyckoff (Accumulation -> Manipulation -> MSS)"
+InpShowWyckoff          = input.bool(true, "Afficher les patterns Wyckoff", group = grp_wy)
+InpWyMinAccumBars       = input.int(3, "Barres d'accumulation minimum", minval = 1, group = grp_wy)
+InpWyMaxAccumBars       = input.int(20, "Barres d'accumulation maximum", minval = 2, group = grp_wy)
+InpWyAccumRangeMult     = input.float(6.0, "Multiplicateur d'amplitude d'accumulation", minval = 0.1, group = grp_wy)
+InpWyMssLookback        = input.int(60, "Fenêtre de recherche spring/MSS (barres)", minval = 1, group = grp_wy)
+InpWyMinSpringSweepPct  = input.float(0.05, "Sweep minimum du spring (% de l'amplitude, 0.05=XAU, 0.10=Forex)", minval = 0.0, group = grp_wy)
+InpWyMinMssStrengthPct  = input.float(0.03, "Force minimum du MSS (% de l'amplitude)", minval = 0.0, group = grp_wy)
+InpWyMinScoreDetect     = input.float(4.0, "Score Wyckoff minimum (détection)", group = grp_wy)
+InpMinWyckoffScoreToShow = input.float(4.0, "Score minimum affiché (0-10)", minval = 0.0, maxval = 10.0, group = grp_wy)
+InpMaxWyckoffShown      = input.int(15, "Nombre max de patterns affichés", minval = 1, maxval = 100, group = grp_wy)
+InpMaxWyckoffStored     = input.int(150, "Patterns conservés avant purge", minval = 20, group = grp_wy)
+InpWyDemandColor        = input.color(color.blue, "Couleur pattern demande (Spring)", group = grp_wy)
+InpWySupplyColor        = input.color(color.red, "Couleur pattern offre (Upthrust)", group = grp_wy)
+InpWyAccumColor         = input.color(color.new(color.orange, 70), "Couleur boîte d'accumulation", group = grp_wy)
+
 grp_par = "Paramètres de détection (défauts = valeurs production)"
 InpSwingLookback      = input.int(5, "Swing lookback", minval = 1, group = grp_par)
 InpBosLookback        = input.int(20, "BOS lookback (recherche du niveau à casser)", minval = 1, group = grp_par)
@@ -73,7 +100,8 @@ type SDZone
     string side          = "demand"   // "demand" ou "supply"
     float  zoneTop       = na
     float  zoneBottom    = na
-    float  wickExtreme   = na
+    float  wickExtreme   = na         // extrémité du pivot (bas demande / haut offre) = 0% du Fib
+    float  swingExtreme  = na         // extrémité opposée de l'impulsion [pivot, BOS] = 100% du Fib
     int    formedAt      = na         // heure (ms) de la barre de BOS
     float  sBos          = 0.0
     float  sImpulse      = 0.0
@@ -288,6 +316,27 @@ type PendingPivot
     float  bodyL
     int    expiryI       // dernier index n15 où le BOS est encore recherché
 
+// Prix au ratio de retracement "frac" (0-1) entre wickExtreme (0%) et
+// swingExtreme (100%) — même convention que zeus/strategy/smc/fibonacci.py :
+// demande (bullish) : 0%=swingExtreme (haut), 100%=wickExtreme (bas) ;
+// offre   (bearish)  : 0%=swingExtreme (bas),  100%=wickExtreme (haut).
+f_fibPrice(wickExtreme, swingExtreme, isDemand, frac) =>
+    isDemand ? swingExtreme - (swingExtreme - wickExtreme) * frac : swingExtreme + (wickExtreme - swingExtreme) * frac
+
+// Extrémité opposée du wick sur l'impulsion [pivotI, bosBar] : le plus
+// haut (demande) / le plus bas (offre) atteint pendant le mouvement qui
+// a confirmé la zone — sert d'ancre 100% pour le retracement Fibonacci.
+f_swingExtreme(h, l, pivotI, bosBar, isDemand) =>
+    ext = isDemand ? array.get(h, pivotI) : array.get(l, pivotI)
+    for i = pivotI to bosBar
+        if isDemand
+            if array.get(h, i) > ext
+                ext := array.get(h, i)
+        else
+            if array.get(l, i) < ext
+                ext := array.get(l, i)
+    ext
+
 f_finalizeZone(t, o, h, l, c, atr, pivotI, bodyH, bodyL, side, bosBar, bosLevel) =>
     isDemand    = side == "demand"
     baseStart   = f_findBaseStart(h, l, atr, pivotI, InpMaxBaseCandles)
@@ -304,6 +353,7 @@ f_finalizeZone(t, o, h, l, c, atr, pivotI, bodyH, bodyL, side, bosBar, bosLevel)
         zone := SDZone.new(
              side = side, zoneTop = bodyH, zoneBottom = bodyL,
              wickExtreme = isDemand ? array.get(l, pivotI) : array.get(h, pivotI),
+             swingExtreme = f_swingExtreme(h, l, pivotI, bosBar, isDemand),
              formedAt = array.get(t, bosBar),
              sBos = sBos, sImpulse = sImp, sTimeScore = sTime,
              sFresh = sFresh, sSweep = sSweep,
@@ -327,6 +377,86 @@ f_updateZonesOnBar(persistZones, barLow, barHigh, barClose, barTime) =>
                     else if z.touchCount == 1
                         z.sFresh := 1.0
 
+// ── Wyckoff (port incrémental de ZeusWyckoff.mqh) ────────────────────
+// Le pattern Accumulation -> Manipulation (Spring/Upthrust) -> MSS est,
+// dans l'original, recherché en un seul passage arrière (backward) sur
+// jusqu'à 200 barres, avec un scan avant (forward) supplémentaire de
+// 60 barres — même souci de performance que les zones S&D si rejoué
+// barre par barre sur tout l'historique. Même stratégie : un candidat
+// d'accumulation par barre (celle qui se termine à la barre courante),
+// puis une machine à 2 états ("spring" -> "mss") résolue en O(1) par
+// entrée en attente à chaque nouvelle barre.
+type PendingAccum
+    string side              // "demand" ou "supply"
+    float  accumHigh
+    float  accumLow
+    int    accumCnt
+    string phase             // "spring" (cherche le sweep) ou "mss" (cherche la cassure)
+    int    springDeadline    // dernier index où chercher le spring/upthrust
+    int    manipBar          // -1 tant que le spring n'est pas trouvé
+    float  manipExtreme
+    int    mssDeadline       // dernier index où chercher le MSS
+
+type WyckoffPattern
+    string side
+    float  accumHigh
+    float  accumLow
+    int    accumStartAt      // approx. — voir DrawWyckoff, comme la note MQL5
+    float  manipExtreme
+    int    manipAt           // timestamp, PAS un index (immunisé contre les shifts du tampon)
+    float  mssClose
+    int    mssAt             // = formedAt
+    float  score
+    int    formedAt
+
+// Fenêtre d'accumulation tendue ? Port de ZeusCheckAccum — fenêtre
+// [start, accumEnd) exclusive de accumEnd, comme l'original.
+f_checkAccum(h, l, accumEnd, maxAccumBars, accumRangeMult) =>
+    start  = math.max(0, accumEnd - maxAccumBars)
+    accumH = -1e18
+    accumL = 1e18
+    sumRng = 0.0
+    cnt    = 0
+    ok     = false
+    if start < accumEnd
+        for k = start to accumEnd - 1
+            hk = array.get(h, k)
+            lk = array.get(l, k)
+            if hk > accumH
+                accumH := hk
+            if lk < accumL
+                accumL := lk
+            sumRng := sumRng + (hk - lk)
+            cnt    := cnt + 1
+        if cnt > 0
+            accumRng = accumH - accumL
+            if accumRng >= 1e-8
+                avgCandle = sumRng / cnt
+                if avgCandle >= 1e-8
+                    ok := accumRng <= accumRangeMult * avgCandle
+    [ok, accumH, accumL]
+
+// Score Wyckoff sur 10 (port de ZeusWyckoffScore) : profondeur
+// d'accumulation, ampleur du sweep, qualité de la bougie de
+// manipulation, force du close MSS, vitesse de la confirmation.
+f_wyckoffScore(isDemand, accumHigh, accumLow, accumCnt, o, h, l, c, si, mi, minAccumBars) =>
+    accumRng = accumHigh - accumLow
+    score = math.min(2.0, float(accumCnt) / minAccumBars)
+    if accumRng > 1e-8
+        sweep = isDemand ? math.max(0.0, accumLow - array.get(l, si)) : math.max(0.0, array.get(h, si) - accumHigh)
+        score := score + math.min(2.0, (sweep / accumRng) * 4.0)
+    candleRng = array.get(h, si) - array.get(l, si)
+    if candleRng > 1e-8
+        bodyR = math.abs(array.get(c, si) - array.get(o, si)) / candleRng
+        wickR = isDemand ? math.max(0.0, accumLow - array.get(l, si)) / candleRng : math.max(0.0, array.get(h, si) - accumHigh) / candleRng
+        score := score + math.min(2.0, wickR * 3.0 + math.max(0.0, 0.5 - bodyR))
+    if accumRng > 1e-8
+        strength = isDemand ? math.max(0.0, array.get(c, mi) - accumHigh) : math.max(0.0, accumLow - array.get(c, mi))
+        score := score + math.min(2.0, (strength / accumRng) * 2.0)
+    barsToMss = mi - si
+    score := score + math.max(0.0, 2.0 - (barsToMss - 1) * 0.5)
+    math.min(10.0, score)
+
 // ── État persistant ───────────────────────────────────────────────
 var array<SDZone>       g_zones   = array.new<SDZone>()
 var array<PendingPivot> g_pending = array.new<PendingPivot>()  // pivots en attente de leur BOS
@@ -340,6 +470,14 @@ var array<float>  g_atr = array.new<float>()   // ATR incrémental, même longue
 var float          g_atrSum = 0.0              // somme glissante des TR (fenêtre InpAtrPeriod)
 var array<box>    g_boxes  = array.new<box>()
 var array<label>  g_labels = array.new<label>()
+var array<line>   g_fibLines = array.new<line>()
+var array<label>  g_fibLabels = array.new<label>()
+var array<box>    g_oteBoxes = array.new<box>()
+
+var array<PendingAccum>   g_wyPending  = array.new<PendingAccum>()   // accumulations en cours de résolution
+var array<WyckoffPattern> g_wyPatterns = array.new<WyckoffPattern>() // patterns confirmés
+var array<box>    g_wyBoxes  = array.new<box>()
+var array<label>  g_wyLabels = array.new<label>()
 
 // ── Fetch HTF non-repaint (idiome standard : offset [1]) ────────────
 [htfTime, htfOpen, htfHigh, htfLow, htfClose] = request.security(syminfo.tickerid, zoneTF, [time, open, high, low, close], lookahead = barmerge.lookahead_off)
@@ -390,6 +528,15 @@ if newHtfBar and not na(htfTime[1])
                 pp = array.get(g_pending, pi)
                 pp.pivotI  := pp.pivotI - 1
                 pp.expiryI := pp.expiryI - 1
+        // Idem pour g_wyPending (accumulations Wyckoff en attente)
+        if array.size(g_wyPending) > 0
+            for wi = 0 to array.size(g_wyPending) - 1
+                wp = array.get(g_wyPending, wi)
+                wp.springDeadline := wp.springDeadline - 1
+                if wp.manipBar >= 0
+                    wp.manipBar := wp.manipBar - 1
+                if wp.mssDeadline >= 0
+                    wp.mssDeadline := wp.mssDeadline - 1
 
     n15 = array.size(g_hT)
 
@@ -451,6 +598,88 @@ if newHtfBar and not na(htfTime[1])
                 array.push(keepPending, pp)
         g_pending := keepPending
 
+    // ── Wyckoff : nouveau candidat d'accumulation par barre ──────────
+    // (celle qui se termine à la barre courante — même logique "un
+    // candidat neuf par barre" que les zones S&D ci-dessus). Contrairement
+    // au pivot des zones S&D, une accumulation ne dépend que du PASSÉ
+    // (bornes [start, accumEnd) où accumEnd = barre courante), donc
+    // vérifiable immédiatement, sans délai de confirmation.
+    if InpShowWyckoff
+        accumEnd = n15 - 1
+        if accumEnd >= InpWyMinAccumBars
+            [accOk, accH, accL] = f_checkAccum(g_hH, g_hL, accumEnd, InpWyMaxAccumBars, InpWyAccumRangeMult)
+            if accOk
+                accumCnt       = math.min(accumEnd, InpWyMaxAccumBars)
+                springDeadline = accumEnd + InpWyMssLookback
+                array.push(g_wyPending, PendingAccum.new(side = "demand", accumHigh = accH, accumLow = accL, accumCnt = accumCnt, phase = "spring", springDeadline = springDeadline, manipBar = -1, manipExtreme = na, mssDeadline = -1))
+                array.push(g_wyPending, PendingAccum.new(side = "supply", accumHigh = accH, accumLow = accL, accumCnt = accumCnt, phase = "spring", springDeadline = springDeadline, manipBar = -1, manipExtreme = na, mssDeadline = -1))
+
+        // Résolution : chaque entrée en attente avance d'une étape (ou
+        // expire) sur cette barre — coût O(1) par entrée.
+        if array.size(g_wyPending) > 0
+            keepWy = array.new<PendingAccum>()
+            cur = n15 - 1
+            for wi = 0 to array.size(g_wyPending) - 1
+                pa = array.get(g_wyPending, wi)
+                isDemand  = pa.side == "demand"
+                accumRng  = pa.accumHigh - pa.accumLow
+                keep      = false
+                if pa.phase == "spring"
+                    springLike = isDemand ? (newL < pa.accumLow and newC > pa.accumLow) : (newH > pa.accumHigh and newC < pa.accumHigh)
+                    if springLike
+                        sweep    = isDemand ? (pa.accumLow - newL) : (newH - pa.accumHigh)
+                        minSweep = InpWyMinSpringSweepPct * accumRng
+                        if sweep >= minSweep
+                            pa.phase        := "mss"
+                            pa.manipBar     := cur
+                            pa.manipExtreme := isDemand ? newL : newH
+                            pa.mssDeadline  := cur + InpWyMssLookback
+                            keep := true
+                        else
+                            // sweep faible : abandon direct (demande,
+                            // "break" côté MQL5) ou on continue de
+                            // chercher un meilleur candidat (offre,
+                            // "continue" côté MQL5 — asymétrie voulue).
+                            keep := isDemand ? false : cur < pa.springDeadline
+                    else
+                        keep := cur < pa.springDeadline
+                else  // "mss"
+                    broke = isDemand ? newC > pa.accumHigh : newC < pa.accumLow
+                    if broke
+                        strength = isDemand ? (newC - pa.accumHigh) : (pa.accumLow - newC)
+                        minMss   = InpWyMinMssStrengthPct * accumRng
+                        if strength >= minMss
+                            wyScore = f_wyckoffScore(isDemand, pa.accumHigh, pa.accumLow, pa.accumCnt, g_hO, g_hH, g_hL, g_hC, pa.manipBar, cur, InpWyMinAccumBars)
+                            if wyScore >= InpWyMinScoreDetect
+                                // Conversion index -> timestamp MAINTENANT (pa.manipBar
+                                // est encore un index de tampon valide à cet instant) —
+                                // WyckoffPattern ne doit stocker QUE des temps/prix,
+                                // jamais d'index, pour rester valide après un shift.
+                                accumStartIdx = math.max(0, pa.manipBar - pa.accumCnt)
+                                pattern = WyckoffPattern.new(
+                                     side = pa.side, accumHigh = pa.accumHigh, accumLow = pa.accumLow,
+                                     accumStartAt = array.get(g_hT, accumStartIdx),
+                                     manipExtreme = pa.manipExtreme, manipAt = array.get(g_hT, pa.manipBar),
+                                     mssClose = newC, mssAt = array.get(g_hT, cur),
+                                     score = wyScore, formedAt = array.get(g_hT, cur))
+                                array.push(g_wyPatterns, pattern)
+                        // trouvé ou pas (score insuffisant) : abandonné
+                        // dans les deux cas, comme l'original.
+                        keep := false
+                    else
+                        keep := cur < pa.mssDeadline
+                if keep
+                    array.push(keepWy, pa)
+            g_wyPending := keepWy
+
+        // Purge : borne la taille de g_wyPatterns
+        if array.size(g_wyPatterns) > InpMaxWyckoffStored
+            trimmed = array.new<WyckoffPattern>()
+            trimStart = array.size(g_wyPatterns) - InpMaxWyckoffStored
+            for ti = trimStart to array.size(g_wyPatterns) - 1
+                array.push(trimmed, array.get(g_wyPatterns, ti))
+            g_wyPatterns := trimmed
+
     if n15 > 0
         f_updateZonesOnBar(g_zones, array.get(g_hL, n15 - 1), array.get(g_hH, n15 - 1), array.get(g_hC, n15 - 1), array.get(g_hT, n15 - 1))
 
@@ -473,6 +702,26 @@ if newHtfBar and not na(htfTime[1])
         for li = 0 to array.size(g_labels) - 1
             label.delete(array.get(g_labels, li))
         array.clear(g_labels)
+    if array.size(g_fibLines) > 0
+        for fi = 0 to array.size(g_fibLines) - 1
+            line.delete(array.get(g_fibLines, fi))
+        array.clear(g_fibLines)
+    if array.size(g_fibLabels) > 0
+        for fi = 0 to array.size(g_fibLabels) - 1
+            label.delete(array.get(g_fibLabels, fi))
+        array.clear(g_fibLabels)
+    if array.size(g_oteBoxes) > 0
+        for oi = 0 to array.size(g_oteBoxes) - 1
+            box.delete(array.get(g_oteBoxes, oi))
+        array.clear(g_oteBoxes)
+    if array.size(g_wyBoxes) > 0
+        for oi = 0 to array.size(g_wyBoxes) - 1
+            box.delete(array.get(g_wyBoxes, oi))
+        array.clear(g_wyBoxes)
+    if array.size(g_wyLabels) > 0
+        for oi = 0 to array.size(g_wyLabels) - 1
+            label.delete(array.get(g_wyLabels, oi))
+        array.clear(g_wyLabels)
 
     // Tri par formed_at décroissant (les plus récentes en premier)
     nZones = array.size(g_zones)
@@ -527,4 +776,79 @@ if newHtfBar and not na(htfTime[1])
                      xloc = xloc.bar_time)
                 array.push(g_labels, newLbl)
 
+                // ── Retracement Fibonacci sur le swing de la zone ──────
+                if InpShowFibonacci and not na(z.swingExtreme)
+                    fibLevels = array.from(0.236, 0.382, 0.5, 0.618, 0.786)
+                    for fi = 0 to array.size(fibLevels) - 1
+                        frac  = array.get(fibLevels, fi)
+                        price = f_fibPrice(z.wickExtreme, z.swingExtreme, isDemand, frac)
+                        fibLine = line.new(x1 = z.formedAt, y1 = price, x2 = nowTime, y2 = price,
+                             color = InpFibColor, style = line.style_dotted, width = 1,
+                             xloc = xloc.bar_time)
+                        array.push(g_fibLines, fibLine)
+                        if frac == 0.5 or frac == 0.618
+                            fibLbl = label.new(x = nowTime, y = price,
+                                 text = str.tostring(int(math.round(frac * 100))) + "% ",
+                                 color = color.new(color.white, 100), textcolor = InpFibColor,
+                                 style = label.style_label_right, size = size.tiny,
+                                 xloc = xloc.bar_time)
+                            array.push(g_fibLabels, fibLbl)
+
+                    if InpShowOteZone
+                        oteA = f_fibPrice(z.wickExtreme, z.swingExtreme, isDemand, 0.618)
+                        oteB = f_fibPrice(z.wickExtreme, z.swingExtreme, isDemand, 0.786)
+                        oteBox = box.new(left = z.formedAt, top = math.max(oteA, oteB), right = nowTime, bottom = math.min(oteA, oteB),
+                             border_color = InpOteColor, bgcolor = InpOteColor, border_width = 1,
+                             border_style = line.style_dotted, xloc = xloc.bar_time)
+                        array.push(g_oteBoxes, oteBox)
+
                 shown := shown + 1
+
+    // ── Dessin des patterns Wyckoff (Accumulation -> Manipulation -> MSS) ──
+    if InpShowWyckoff and array.size(g_wyPatterns) > 0
+        nWy = array.size(g_wyPatterns)
+        wyIdx = array.new<int>(nWy)
+        for k = 0 to nWy - 1
+            array.set(wyIdx, k, k)
+        if nWy > 1
+            for a = 1 to nWy - 1
+                key = array.get(wyIdx, a)
+                b = a - 1
+                while b >= 0 and array.get(g_wyPatterns, array.get(wyIdx, b)).formedAt < array.get(g_wyPatterns, key).formedAt
+                    array.set(wyIdx, b + 1, array.get(wyIdx, b))
+                    b := b - 1
+                array.set(wyIdx, b + 1, key)
+
+        wyShown = 0
+        for a = 0 to nWy - 1
+            if wyShown >= InpMaxWyckoffShown
+                break
+            pat = array.get(g_wyPatterns, array.get(wyIdx, a))
+            if pat.score >= InpMinWyckoffScoreToShow
+                patIsDemand = pat.side == "demand"
+                col = patIsDemand ? InpWyDemandColor : InpWySupplyColor
+
+                // Boîte d'accumulation — approximation visuelle (voir
+                // note équivalente côté MQL5 : accumStartAt est dérivé
+                // de accumCnt, un écart de quelques barres est possible
+                // avec la vraie fenêtre utilisée par le scoring).
+                accumBox = box.new(left = pat.accumStartAt, top = pat.accumHigh, right = pat.manipAt, bottom = pat.accumLow,
+                     border_color = InpWyAccumColor, bgcolor = InpWyAccumColor, border_width = 1,
+                     border_style = line.style_dashed, xloc = xloc.bar_time)
+                array.push(g_wyBoxes, accumBox)
+
+                manipLbl = label.new(x = pat.manipAt, y = pat.manipExtreme,
+                     text = patIsDemand ? "Spring" : "Upthrust",
+                     color = color.new(color.white, 100), textcolor = col,
+                     style = patIsDemand ? label.style_arrowup : label.style_arrowdown,
+                     size = size.small, xloc = xloc.bar_time)
+                array.push(g_wyLabels, manipLbl)
+
+                mssLbl = label.new(x = pat.mssAt, y = pat.mssClose,
+                     text = "MSS " + str.tostring(int(math.round(pat.score))) + "/10",
+                     color = col, textcolor = color.white,
+                     style = patIsDemand ? label.style_label_up : label.style_label_down,
+                     size = size.small, xloc = xloc.bar_time)
+                array.push(g_wyLabels, mssLbl)
+
+                wyShown := wyShown + 1
