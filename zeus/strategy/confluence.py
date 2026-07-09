@@ -107,50 +107,66 @@ class ConfluenceScore:
         """Factor 8 gate — internal bias matches direction."""
         return self.factors[7].active
 
-    def is_tradeable(self, min_score: float = 4.0) -> bool:
+    def is_tradeable(
+        self, min_score: float = 4.0, require_entry_gate: bool = True,
+    ) -> bool:
         """
-        True when the score meets the minimum AND both gate factors fire.
+        True when the score meets the minimum AND the required gates fire.
 
-        Gates (factors 1 and 8) must be active regardless of total score.
-        A high-scoring setup without structure or an internal trigger is not
-        entered — this enforces the fail-closed principle at entry.
+        Gate 1 (structure) is always required. Gate 8 (Entry Model — internal
+        bias matches direction) is required by default, but pullback/scalp
+        strategies intentionally enter while internal structure is still
+        opposed to the HTF direction; those callers pass
+        require_entry_gate=False to skip factor 8 without disabling the
+        structure gate.
+
+        Args:
+            require_entry_gate: When False, factor 8 is not required. Must
+                match the caller's own internal-alignment requirement (e.g.
+                MTFSMCStrategy's require_htf_internal_align) so this gate
+                doesn't silently re-impose a requirement the caller already
+                decided to relax.
         """
+        entry_ok = self.has_entry_confirmation if require_entry_gate else True
         return (
             self.has_structure
-            and self.has_entry_confirmation
+            and entry_ok
             and self.score >= min_score
         )
 
     def grade(
         self,
-        min_score:   float = 4.0,
-        b_threshold: float = 6.0,
-        a_threshold: float = 8.0,
+        min_score:          float = 4.0,
+        b_threshold:        float = 6.0,
+        a_threshold:        float = 8.0,
+        require_entry_gate: bool  = True,
     ) -> PatternGrade:
         """
         Classify this setup into a quality tier (A/B/C/F).
 
-        F is returned whenever is_tradeable(min_score) is False — grading
-        a non-tradeable setup A, B, or C would let downstream code size or
-        enter a trade that the gate logic already rejected, so the two
-        checks must never disagree (fail-closed).
+        F is returned whenever is_tradeable(min_score, require_entry_gate) is
+        False — grading a non-tradeable setup A, B, or C would let downstream
+        code size or enter a trade that the gate logic already rejected, so
+        the two checks must never disagree (fail-closed).
 
         Args:
-            min_score:   Same threshold passed to is_tradeable() — the floor
-                         for any non-F grade. May exceed b_threshold (e.g. a
-                         strategy configured with a strict min_score simply
-                         never produces a C grade — that tier becomes
-                         unreachable, not invalid).
-            b_threshold: Minimum score for a B grade.
-            a_threshold: Minimum score for an A grade (the top tier). Must
-                         be >= b_threshold.
+            min_score:          Same threshold passed to is_tradeable() — the
+                                floor for any non-F grade. May exceed
+                                b_threshold (e.g. a strategy configured with a
+                                strict min_score simply never produces a C
+                                grade — that tier becomes unreachable, not
+                                invalid).
+            b_threshold:        Minimum score for a B grade.
+            a_threshold:        Minimum score for an A grade (the top tier).
+                                Must be >= b_threshold.
+            require_entry_gate: Forwarded to is_tradeable() — see there.
         """
         if a_threshold < b_threshold:
             raise ValueError(
                 "a_threshold must be >= b_threshold "
                 f"(got b_threshold={b_threshold}, a_threshold={a_threshold})"
             )
-        if not self.is_tradeable(min_score):
+        if not self.is_tradeable(min_score, require_entry_gate=require_entry_gate):
             return PatternGrade.F
         if self.score >= a_threshold:
             return PatternGrade.A
@@ -215,11 +231,12 @@ def score_confluence(
 
 
 def best_confluence(
-    result:    SMCResult,
-    price:     float,
-    bar_index: int,
-    min_score: float = 4.0,
-    timestamp: pd.Timestamp | None = None,
+    result:             SMCResult,
+    price:              float,
+    bar_index:          int,
+    min_score:          float = 4.0,
+    timestamp:          pd.Timestamp | None = None,
+    require_entry_gate: bool  = True,
     **kwargs,
 ) -> ConfluenceScore | None:
     """
@@ -229,12 +246,19 @@ def best_confluence(
     On a score tie the BULLISH direction wins (conservative default).
 
     Args:
-        timestamp: UTC timestamp of the current bar forwarded to F7 (Kill Zone).
+        timestamp:          UTC timestamp of the current bar forwarded to F7
+                            (Kill Zone).
+        require_entry_gate: Forwarded to is_tradeable() — set False for
+                            pullback/scalp callers that already relax their
+                            own internal-alignment requirement, so this
+                            function doesn't silently re-impose it.
     """
     bull = score_confluence(result, price, bar_index, BULLISH, timestamp=timestamp, **kwargs)
     bear = score_confluence(result, price, bar_index, BEARISH, timestamp=timestamp, **kwargs)
 
-    candidates = [s for s in (bull, bear) if s.is_tradeable(min_score)]
+    candidates = [
+        s for s in (bull, bear) if s.is_tradeable(min_score, require_entry_gate=require_entry_gate)
+    ]
     if not candidates:
         return None
     # Prefer higher score; BULLISH (+1) wins on tie (BEARISH = -1 < BULLISH = +1)

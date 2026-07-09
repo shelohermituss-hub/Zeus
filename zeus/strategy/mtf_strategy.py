@@ -366,6 +366,7 @@ class MTFSMCStrategy(Strategy):
             min_score=self._min_htf_score,
             timestamp=ltf_ts,
             sweep_zone_tol_pct=self._sweep_zone_tol_pct,
+            require_entry_gate=self._require_htf_internal_align,
         )
         if cs is None:
             return Signal(SignalType.NONE, 0.0, "HTF score below threshold", bar_index)
@@ -375,6 +376,7 @@ class MTFSMCStrategy(Strategy):
             min_score=self._min_htf_score,
             b_threshold=self._grade_b_threshold,
             a_threshold=self._grade_a_threshold,
+            require_entry_gate=self._require_htf_internal_align,
         )
         if self._GRADE_RANK.get(grade.value, 0) < self._GRADE_RANK.get(self._min_grade.value, 0):
             return Signal(

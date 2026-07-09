@@ -80,10 +80,14 @@ VARIANTS: dict[str, dict] = {
 
 
 def _build_strategy(df_1h, df_15m, df_1d, config: dict) -> ConfluenceScalpStrategy:
+    # df_mtf_15m intentionally NOT passed: the 1H/15M MSS gate is always in
+    # pullback when we want to enter (same conjunction problem documented in
+    # run_scalp_backtest.py), producing 0 setups regardless of every other
+    # gate — matches the existing project convention of disabling it.
     off = config.get("_off", [])
-    kwargs = dict(min_htf_score=6.0, min_grade=config.get("min_grade", PatternGrade.B))
+    kwargs = dict(min_htf_score=3.0, min_grade=config.get("min_grade", PatternGrade.B))
     strat = ConfluenceScalpStrategy(
-        df_htf_1h=df_1h, df_mtf_15m=df_15m, df_daily=df_1d,
+        df_htf_1h=df_1h, df_mtf_15m=None, df_daily=df_1d,
         sl_pips=SL_PIPS, max_sl_pips=MAX_SL_PIPS, pip_value=1.0,
         **kwargs,
     )
