@@ -4,6 +4,49 @@ Port MQL5 complet de la stratégie Zeus S&D/Wyckoff : XAUUSD en V4 production
 (Runner@20R) + 10 paires WS7.5 (TIERED-5R), sous guard propfirm strict.
 **Un seul graphique suffit** — l'EA gère les 11 symboles par timer.
 
+## ZeusVision — indicateur visuel (zones + Wyckoff, sans trading)
+
+`ZeusVision.mq5` est un **indicateur** (pas un EA — n'envoie jamais d'ordre)
+qui trace sur le graphique exactement ce que la stratégie V4 voit, en
+réutilisant sans aucune modification la détection déjà validée
+(`ZeusZones.mqh` + `ZeusWyckoff.mqh` via `ZeusSignals.mqh`) :
+
+- **Zones Supply/Demand** (rectangles), calculées sur M15 resamplé depuis M1
+  — jamais `CopyRates` M15 direct, parité stricte avec l'EA. Zones actives en
+  couleur pleine, zones mitigées en pointillés grisés (configurable).
+- **Patterns Wyckoff** (Accumulation → Manipulation → MSS) détectés sur M1 :
+  flèche sur la barre de Spring/Upthrust, flèche + étiquette de score sur la
+  barre de confirmation MSS, boîte d'accumulation en arrière-plan. Les
+  patterns dont le score dépasse le seuil de signal de production
+  (`InpXauWSLong/Short`, `InpFxWSLong/Short`) sont marqués `[SIGNAL]`.
+
+**Multi-timeframe** : la détection tourne toujours sur le couple M1/M15 que
+le bot trade réellement, mais l'indicateur peut être posé sur n'importe quel
+graphique (M1, M5, M15, H1, H4...) — les objets sont positionnés par
+prix/temps absolus, donc visibles quelle que soit la résolution d'affichage.
+
+### Installation (indicateur, dossier séparé de l'EA)
+
+1. Copie dans `MQL5\Indicators\ZeusVision\` :
+   ```
+   MQL5\Indicators\ZeusVision\ZeusVision.mq5
+   MQL5\Indicators\ZeusVision\Include\ZeusPivot.mqh
+   MQL5\Indicators\ZeusVision\Include\ZeusZones.mqh
+   MQL5\Indicators\ZeusVision\Include\ZeusWyckoff.mqh
+   MQL5\Indicators\ZeusVision\Include\ZeusSignals.mqh
+   ```
+2. Ouvre `ZeusVision.mq5` dans MetaEditor → **F7** (compiler)
+3. Glisse `ZeusVision` sur n'importe quel graphique du symbole voulu
+
+Aucun paramètre de risque/trading — purement visuel. Les tooltips des objets
+(survol souris) détaillent le scoring (BOS/impulsion/temps/fraîcheur/sweep
+pour une zone ; les 5 critères Wyckoff pour un pattern).
+
+**Non testé en compilation dans cet environnement** (pas de MetaEditor sur
+cette machine) — chaque appel de fonction a été vérifié manuellement contre
+les signatures de `ZeusZones.mqh`/`ZeusWyckoff.mqh`/`ZeusSignals.mqh`, mais
+une compilation réelle (étape 2 ci-dessus) reste nécessaire avant usage.
+
 ## Installation
 
 1. Ouvre MetaEditor (F4 depuis MT5)
