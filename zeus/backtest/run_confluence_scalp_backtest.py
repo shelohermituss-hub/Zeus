@@ -37,7 +37,7 @@ MIN_RR        = 1.5
 SLIPPAGE_PCT  = 0.0002
 
 PERIODS = [
-    ("2026 H1", "2026-01-01", "2026-06-30"),
+    ("2026-01", "2026-01-01", "2026-01-31"),
 ]
 
 
@@ -45,7 +45,7 @@ def main() -> None:
     setup_logger("INFO")
 
     print(f"Chargement M1 XAUUSD depuis {DATA_DIR} …")
-    df_m1 = load_m1_directory(DATA_DIR)
+    df_m1 = load_m1_directory(DATA_DIR, glob_pattern="DAT_MT_XAUUSD_M1_2026*.csv")
     tfs   = build_timeframes(df_m1)
     df_15m, df_1h, df_1d = tfs["15min"], tfs["1h"], tfs["1d"]
     print(f"  M1 total : {len(df_m1):,} barres  ({df_m1.index[0]} → {df_m1.index[-1]})\n")
