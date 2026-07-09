@@ -264,7 +264,10 @@ f_findBaseStart(h, l, atr, pivotBar, maxBaseCandles) =>
     limit  = math.max(-1, pivotBar - maxBaseCandles)
     result = math.max(0, pivotBar - maxBaseCandles)
     if pivotBar - 1 > limit
-        for i = pivotBar - 1 to limit + 1 by -1
+        // Pine détermine la direction en comparant les bornes (ici
+        // descendante puisque pivotBar-1 > limit+1) ; "by" n'est qu'une
+        // magnitude de pas et doit rester positif.
+        for i = pivotBar - 1 to limit + 1 by 1
             rng = array.get(h, i) - array.get(l, i)
             if rng > threshold
                 result := i + 1
