@@ -72,14 +72,18 @@ def _filter_signals(signals: list, pct_rank: pd.Series, min_pct: float, max_pct:
     return out
 
 
-def _report(label: str, signals: list, dfs_by_period: dict[str, pd.DataFrame], risk_reward_override: float | None = None) -> dict[str, dict]:
+def _report(label: str, signals: list, full_df: pd.DataFrame, dfs_by_period: dict[str, pd.DataFrame], risk_reward_override: float | None = None) -> dict[str, dict]:
+    """Simule TOUJOURS contre full_df (les bar_index des signaux sont relatifs
+    à full_df, pas aux DataFrames par-période) — seul le sous-ensemble de
+    signaux (via formed_at) change par période. Utiliser un df par-période
+    pour la simulation ferait pointer bar_index sur les mauvaises lignes."""
     out = {}
-    for period, df in dfs_by_period.items():
-        period_sigs = [s for s in signals if df.index[0] <= s.formed_at <= df.index[-1]]
+    for period, period_df in dfs_by_period.items():
+        period_sigs = [s for s in signals if period_df.index[0] <= s.formed_at <= period_df.index[-1]]
         if risk_reward_override is not None:
             import dataclasses
             period_sigs = [dataclasses.replace(s, risk_reward=risk_reward_override) for s in period_sigs]
-        results, n_expired = simulate_all(period_sigs, df, risk_pct=RISK_PCT, initial_equity=INITIAL_BALANCE)
+        results, n_expired = simulate_all(period_sigs, full_df, risk_pct=RISK_PCT, initial_equity=INITIAL_BALANCE)
         m = compute_metrics(results, INITIAL_BALANCE, len(period_sigs), n_expired)
         out[period] = m
     return out
@@ -116,7 +120,7 @@ def main() -> None:
         print(f"  {name}  ({len(all_signals)} signaux bruts sur toute la période)")
         print("=" * 100)
 
-        baseline = _report("baseline", all_signals, dfs_by_period, rr_override)
+        baseline = _report("baseline", all_signals, full_df, dfs_by_period, rr_override)
         print(f"  {'':>28} {'2024':>14} {'2025':>14} {'2026H1':>14}")
         def _line(tag, m):
             cells = []
@@ -129,7 +133,7 @@ def main() -> None:
         for min_pct, max_pct, tag in [(0.5, 1.0, "haute vol (>=p50)"), (0.65, 1.0, "haute vol (>=p65)"),
                                         (0.0, 0.5, "basse vol (<=p50)")]:
             filtered = _filter_signals(all_signals, pct_rank, min_pct, max_pct)
-            m = _report("filtered", filtered, dfs_by_period, rr_override)
+            m = _report("filtered", filtered, full_df, dfs_by_period, rr_override)
             _line(tag, m)
 
 
