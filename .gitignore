@@ -14,3 +14,4 @@ data/ticks/
 *.db
 .venv/
 venv/
+graphify-out/

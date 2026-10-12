@@ -35,6 +35,35 @@ Le projet doit être découpé en modules clairs :
 - config/ : paramètres, environnements, validation.
 - tests/ : tests unitaires et d'intégration.
 
+## Structure du dépôt
+Le code Python vit dans le package `zeus/`, découpé selon l'architecture ci-dessus :
+
+- `zeus/strategy/` : stratégies (une par fichier) et briques de signal (`smc/`, `supply_demand/`).
+- `zeus/risk/` : gestionnaire de risque, règles prop firm.
+- `zeus/orders/` et `zeus/exchange/` : modèles d'ordre, exécution, connecteurs (paper, live, MT5).
+- `zeus/backtest/` : moteurs de simulation réutilisables (engine, data_loader, walk_forward, monte_carlo, report).
+- `zeus/paper/` : moteurs de paper trading.
+- `zeus/live/` : runner live (P11).
+- `zeus/monitoring/`, `zeus/utils/` : alertes, métriques, logs.
+- `zeus/config.py` et `config/` : paramètres validés.
+- `mt5/` (EA MQL5), `tradingview/` (Pine) : portages hors Python.
+- `data/historical/` (données, non versionnées), `data/results/` (résultats de backtest versionnés).
+- `tests/unit/`, `tests/integration/` : un fichier de test par module.
+
+Règles de placement :
+- Un script d'étude ou de sweep (`run_*.py`) n'est pas un moteur : il ne contient que du paramétrage et des appels au moteur, jamais de logique métier propre.
+- Chaque nouvelle famille de stratégie a son sous-dossier dans `strategy/` si elle dépasse un fichier.
+- Les options binaires ont des règles de gain/perte propres (payout fixe, expiration) : leur simulation et leur risque doivent être des modules dédiés, jamais des cas particuliers cachés dans les moteurs forex.
+- Les conclusions d'étude vont dans un fichier `*_FINDINGS.md` à côté des scripts, pas dans ce fichier.
+
+## Skills Claude Code
+Skills installés au niveau du projet dans `.claude/skills/` :
+
+- **graphify** : graphe de connaissances du dépôt. À utiliser pour les étapes 1 à 3 du workflow (comprendre l'existant, résumer l'architecture, repérer les dépendances) avant toute modification non triviale. Si `graphify-out/graph.json` existe, interroger le graphe (`/graphify query`) avant de parcourir les fichiers à la main ; après des changements importants, le mettre à jour (`/graphify . --update`). Nécessite la CLI `graphifyy`. `graphify-out/` n'est pas versionné.
+- **ponytail** : solution la plus simple qui résout entièrement la tâche. Actif par défaut pour l'implémentation (niveau `full`). `/ponytail-review` pour relire un diff, `/ponytail-audit` et `/ponytail-debt` pour repérer la complexité inutile.
+
+Ordre de priorité : ce fichier prime sur les skills. Ponytail ne justifie jamais de supprimer un contrôle de risque, un test, une validation d'entrée, une gestion d'erreur ou un log d'audit.
+
 ## Règles de développement
 - Une responsabilité par module.
 - Fonctions petites et explicites.
