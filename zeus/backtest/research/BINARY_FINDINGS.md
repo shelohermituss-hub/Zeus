@@ -93,3 +93,22 @@ preuve du contraire (contrôler d'abord la répartition horaire).
 
 Règle pour toute étude future sur ces données : **exclure 20h-24h UTC** et vérifier le win rate
 par heure avant de conclure.
+
+---
+
+## Patterns de chandeliers (`run_binary_candlestick_search.py`)
+
+7 patterns du module `candlestick_patterns` (port MetaQuotes : engulfing, harami,
+dark cloud/piercing, hammer/hanging man, étoiles, corbeaux/soldats, meeting lines)
+× confirmation RSI (oui/non) × filtre d'excès Bollinger 2σ (oui/non) × M5/M15/H1 ×
+expiration 1-3 bougies = 252 configurations, même protocole (rollover exclu).
+
+**0 configuration présélectionnée.** Les patterns fréquents (harami, hammer : 25 000 à
+58 000 trades) sont à 49-51 % ; les meilleurs scores bruts (dark cloud/piercing H1 :
+64-100 %) reposent sur 9 à 128 trades et ne tiennent pas en 2025.
+
+Seule piste notable, **à l'envers** : l'engulfing avec RSI sur H1 perd plus souvent qu'il ne
+gagne (44,7 % en 2023-2024, 43,1 % en 2025). Le parier en sens inverse donnerait
+≈ 55-57 %, mais sur 329 + 144 trades (≈ 1 trade toutes les 2 semaines tous instruments
+confondus), et il a été repéré en prenant le pire de 252 configurations. Sans RSI,
+l'inverse de l'engulfing ne fait que 52,2 % / 53,5 % (n = 4 003 / 2 042). Non validé.
