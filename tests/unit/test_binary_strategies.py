@@ -167,3 +167,49 @@ def test_no_lookahead_search_strategies(module, config):
 def test_invalid_search_configs_are_refused(factory):
     with pytest.raises(ValueError):
         factory()
+
+
+# ── chandeliers ───────────────────────────────────────────────────────────────
+
+from zeus.strategy.binary_options import candlestick  # noqa: E402
+
+
+def _engulfing_frame(final_low: float):
+    """Tendance baissière puis engulfing haussier sur la dernière bougie."""
+    n = 40
+    closes = list(np.linspace(1.02, 1.0, n))
+    opens = [c + 0.0005 for c in closes]                 # bougies baissières
+    opens.append(closes[-1] - 0.0002)                    # ouvre sous la clôture précédente
+    closes.append(opens[-2] + 0.003)                     # clôture au-dessus de l'ouverture précédente
+    df = _frame(closes, opens=opens)
+    df.iloc[-1, df.columns.get_loc("low")] = final_low
+    return df
+
+
+def test_candlestick_engulfing_gives_call():
+    d = candlestick.directions(_engulfing_frame(0.999), candlestick.CandlestickConfig(pattern="engulfing"))
+    assert d.iat[-1] == 1
+
+
+def test_candlestick_band_filter_requires_excess():
+    cfg = candlestick.CandlestickConfig(pattern="engulfing", band_std=2.0)
+    assert candlestick.directions(_engulfing_frame(0.9998), cfg).iat[-1] == 0   # pas d'excès
+    assert candlestick.directions(_engulfing_frame(0.99), cfg).iat[-1] == 1     # mèche sous la bande
+
+
+@pytest.mark.parametrize("pattern", ["engulfing", "morning_evening_star", "black_crows_soldiers"])
+def test_candlestick_no_lookahead(pattern):
+    df = _random_walk()
+    df["open"] += np.random.default_rng(1).normal(0, 3e-5, len(df))   # écarts d'ouverture
+    df["high"] = df[["open", "close"]].max(axis=1) + 0.00005
+    df["low"] = df[["open", "close"]].min(axis=1) - 0.00005
+    cfg = candlestick.CandlestickConfig(pattern=pattern)
+    full = candlestick.directions(df, cfg)
+    assert full.abs().sum() > 0
+    for cut in (500, 2999):
+        pd.testing.assert_series_equal(candlestick.directions(df.iloc[: cut + 1], cfg), full.iloc[: cut + 1])
+
+
+def test_candlestick_unknown_pattern_refused():
+    with pytest.raises(ValueError):
+        candlestick.CandlestickConfig(pattern="unknown")

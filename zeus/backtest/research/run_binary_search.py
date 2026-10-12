@@ -26,6 +26,7 @@ from __future__ import annotations
 import itertools
 import json
 import time
+from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -93,14 +94,14 @@ def datasets() -> list[tuple[str, str, Path]]:
     return out
 
 
-def evaluate_dataset(item: tuple[str, str, Path]) -> tuple[str, str, dict]:
+def evaluate_dataset(item: tuple[str, str, Path], variants_fn=variants) -> tuple[str, str, dict]:
     """Toutes les configurations sur un jeu → {clé de config: (gains, pertes)}."""
     name, split, path = item
     symbol = name.split("_")[0]
     tallies = {}
     for tf in TIMEFRAMES:
         df = load_timeframe(path, tf)
-        for vname, module, cfg in variants():
+        for vname, module, cfg in variants_fn():
             directions = module.directions(df, cfg).where(~in_utc_hours(df.index, *EXCLUDED_HOURS_UTC), 0)
             signals = to_signals(directions, vname)
             for bars in EXPIRY_BARS:
@@ -113,11 +114,12 @@ def evaluate_dataset(item: tuple[str, str, Path]) -> tuple[str, str, dict]:
     return name, split, tallies
 
 
-def main() -> None:
+def main(variants_fn=variants, out_path: Path = _OUT) -> None:
+    """``variants_fn`` doit être une fonction de module (sérialisable pour le pool de process)."""
     t0 = time.time()
     items = datasets()
     with Pool(4) as workers:
-        per_dataset = workers.map(evaluate_dataset, items)
+        per_dataset = workers.map(partial(evaluate_dataset, variants_fn=variants_fn), items)
     print(f"{len(items)} jeux évalués en {time.time() - t0:.0f} s ; seuil {BREAKEVEN:.4f}\n")
 
     keys = per_dataset[0][2].keys()
@@ -134,7 +136,7 @@ def main() -> None:
         rows.append(row)
 
     rows.sort(key=lambda r: r["train"]["win_rate_lower_95"], reverse=True)
-    _OUT.write_text(json.dumps({"payout": PAYOUT, "breakeven": round(BREAKEVEN, 4),
+    out_path.write_text(json.dumps({"payout": PAYOUT, "breakeven": round(BREAKEVEN, 4),
                                 "slippage_pips": SLIPPAGE_PIPS, "results": rows}, indent=1))
 
     def line(r):
@@ -150,7 +152,7 @@ def main() -> None:
     for r in rows:
         if r["validated"]:
             print(line(r))
-    print(f"\nRésultats : {_OUT.relative_to(_ROOT)}  ({time.time() - t0:.0f} s)")
+    print(f"\nRésultats : {out_path.relative_to(_ROOT)}  ({time.time() - t0:.0f} s)")
 
 
 if __name__ == "__main__":
