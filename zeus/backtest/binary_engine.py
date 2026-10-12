@@ -99,13 +99,7 @@ class BinaryBacktestResult:
     @property
     def win_rate_lower_bound(self) -> float:
         """Borne basse de Wilson à 95 % : l'edge n'est crédible que si elle dépasse le seuil."""
-        n = self.wins + self.losses
-        if n == 0:
-            return 0.0
-        z, p = 1.96, self.wins / n
-        centre = p + z * z / (2 * n)
-        margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
-        return (centre - margin) / (1 + z * z / n)
+        return wilson_lower_bound(self.wins, self.wins + self.losses)
 
     @property
     def max_drawdown(self) -> float:
@@ -200,6 +194,16 @@ def run_binary_backtest(
         trades=trades, initial_balance=initial_balance, final_balance=risk.balance,
         payout=config.payout, rejections=rejections, skipped_gaps=skipped_gaps,
     )
+
+
+def wilson_lower_bound(wins: int, n: int, z: float = 1.96) -> float:
+    """Borne basse de l'intervalle de Wilson du taux de réussite (0 si n = 0)."""
+    if n == 0:
+        return 0.0
+    p = wins / n
+    centre = p + z * z / (2 * n)
+    margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (centre - margin) / (1 + z * z / n)
 
 
 def _unique_position(index: pd.DatetimeIndex, ts: pd.Timestamp) -> int | None:

@@ -100,3 +100,70 @@ def test_in_utc_hours_wraps_midnight():
 def test_invalid_configs_are_refused(factory):
     with pytest.raises(ValueError):
         factory()
+
+
+# ── stratégies de la recherche élargie ────────────────────────────────────────
+
+from zeus.strategy.binary_options import donchian, exhaustion, keltner_stretch, rsi_pullback  # noqa: E402
+
+
+def test_rsi_pullback_buys_dip_in_uptrend_only():
+    up = list(np.linspace(1.0, 1.1, 60)) + [1.09, 1.08]
+    cfg = rsi_pullback.RsiPullbackConfig(rsi_low=10, rsi_high=90, trend_period=50)
+    assert rsi_pullback.directions(_frame(up), cfg).iat[-1] == 1
+    down = list(np.linspace(1.1, 1.0, 60)) + [0.99, 0.98]
+    assert rsi_pullback.directions(_frame(down), cfg).iat[-1] == 0
+
+
+def test_exhaustion_fades_streak():
+    closes = [1.0, 0.999] * 10 + [1.0, 1.001, 1.002, 1.003, 1.004]
+    d = exhaustion.directions(_frame(closes), exhaustion.ExhaustionConfig(streak=5))
+    assert d.iat[-1] == -1 and d.iat[-2] == 0
+
+
+def test_keltner_stretch_fades_spike():
+    closes = [1.0 + 0.0001 * (i % 2) for i in range(40)] + [1.01]
+    d = keltner_stretch.directions(_frame(closes), keltner_stretch.KeltnerStretchConfig(atr_mult=2.0))
+    assert d.iat[-1] == -1
+
+
+def test_keltner_rejection_requires_opposite_wick():
+    closes = [1.0 + 0.0001 * (i % 2) for i in range(40)] + [1.01]
+    cfg = keltner_stretch.KeltnerStretchConfig(atr_mult=2.0, require_rejection=True)
+    no_wick = _frame(closes)
+    assert keltner_stretch.directions(no_wick, cfg).iat[-1] == 0
+    wick = no_wick.copy()
+    wick.iloc[-1, wick.columns.get_loc("high")] = 1.03   # mèche haute > corps (0.01)
+    assert keltner_stretch.directions(wick, cfg).iat[-1] == -1
+
+
+def test_donchian_breakout_and_fade_are_opposite():
+    closes = [1.0 + 0.0001 * (i % 3) for i in range(30)] + [1.01]
+    df = _frame(closes)
+    assert donchian.directions(df, donchian.DonchianConfig(period=20)).iat[-1] == 1
+    assert donchian.directions(df, donchian.DonchianConfig(period=20, mode="fade")).iat[-1] == -1
+
+
+@pytest.mark.parametrize("module,config", [
+    (rsi_pullback, rsi_pullback.RsiPullbackConfig(rsi_low=20, rsi_high=80, trend_period=50)),
+    (exhaustion, exhaustion.ExhaustionConfig(streak=3)),
+    (keltner_stretch, keltner_stretch.KeltnerStretchConfig(atr_mult=1.5)),
+    (donchian, donchian.DonchianConfig(period=20)),
+])
+def test_no_lookahead_search_strategies(module, config):
+    df = _random_walk()
+    full = module.directions(df, config)
+    assert full.abs().sum() > 0
+    for cut in (500, 1500, 2999):
+        pd.testing.assert_series_equal(module.directions(df.iloc[: cut + 1], config), full.iloc[: cut + 1])
+
+
+@pytest.mark.parametrize("factory", [
+    lambda: rsi_pullback.RsiPullbackConfig(trend_period=1),
+    lambda: exhaustion.ExhaustionConfig(streak=1),
+    lambda: keltner_stretch.KeltnerStretchConfig(atr_mult=0),
+    lambda: donchian.DonchianConfig(mode="other"),
+])
+def test_invalid_search_configs_are_refused(factory):
+    with pytest.raises(ValueError):
+        factory()

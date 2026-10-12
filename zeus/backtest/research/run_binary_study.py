@@ -29,6 +29,7 @@ from pathlib import Path
 import pandas as pd
 
 from zeus.backtest.binary_engine import BinaryBacktestConfig, BinaryBacktestResult, run_binary_backtest
+from zeus.backtest.binary_evaluation import pip_size
 from zeus.backtest.data_loader import parse_m1_csv
 from zeus.risk.binary_risk import BinaryRiskConfig, BinaryRiskManager
 from zeus.strategy.binary_options import mean_reversion, momentum, to_signals
@@ -71,10 +72,6 @@ def load_datasets() -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
             target = holdout if tag == HOLDOUT_TAG else train
             target[f"{pair}_{tag}"] = parse_m1_csv(path)
     return train, holdout
-
-
-def pip_size(dataset: str) -> float:
-    return 0.01 if "jpy" in dataset else 0.0001
 
 
 def run_one(df: pd.DataFrame, signals, dataset: str, expiry: int) -> BinaryBacktestResult:
