@@ -67,6 +67,14 @@ def test_missing_expiry_bar_skips_trade():
     assert res.trades == [] and res.skipped_gaps == 1
 
 
+def test_duplicated_timestamp_skips_trade():
+    """Non-régression : heure répétée au changement d'heure → horodatages en double."""
+    df = _bars([1.0] * 10)
+    df = pd.concat([df, df.iloc[[3]]]).sort_index()
+    res = _run(df, [_sig(0)], expiry_minutes=3)   # expiration sur 10:03, dupliquée
+    assert res.trades == [] and res.skipped_gaps == 1
+
+
 def test_missing_intermediate_bar_does_not_change_outcome():
     df = _bars([1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.2]).drop(pd.Timestamp("2024-03-04 10:03"))
     res = _run(df, [_sig(0)], expiry_minutes=5)

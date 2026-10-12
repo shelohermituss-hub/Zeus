@@ -7,7 +7,8 @@ Règles simulées :
   dégradée de ``entry_slippage`` (en prix, toujours contre le trader).
 - Sortie à la clôture de la bougie qui termine l'expiration.
 - Gain = mise * payout ; perte = mise ; prix de sortie == prix d'entrée → mise remboursée.
-- Si la bougie d'entrée ou celle d'expiration manque (week-end, trou de données),
+- Si la bougie d'entrée ou celle d'expiration manque (week-end, trou de données)
+  ou est ambiguë (horodatage en double, ex. heure répétée au changement d'heure),
   le trade est annulé et compté dans ``skipped_gaps`` : jamais de résultat inventé.
   Les bougies intermédiaires n'influencent pas le résultat d'une binaire.
 - Chaque trade passe par le BinaryRiskManager avant d'être ouvert.
@@ -168,7 +169,9 @@ def run_binary_backtest(
         signal_time = index[signal.bar_index]
         entry_time = signal_time + bar * config.latency_bars
         last_bar_time = entry_time + expiry - bar
-        if entry_time not in index or last_bar_time not in index:
+        entry_pos = _unique_position(index, entry_time)
+        exit_pos = _unique_position(index, last_bar_time)
+        if entry_pos is None or exit_pos is None:
             skipped_gaps += 1
             continue
 
@@ -179,8 +182,8 @@ def run_binary_backtest(
             continue
 
         direction = int(signal.type)
-        entry_price = opens[index.get_loc(entry_time)] + direction * config.entry_slippage
-        exit_price = closes[index.get_loc(last_bar_time)]
+        entry_price = opens[entry_pos] + direction * config.entry_slippage
+        exit_price = closes[exit_pos]
         outcome = _outcome(direction, entry_price, exit_price)
         pnl = {BinaryOutcome.WIN: decision.stake * config.payout,
                BinaryOutcome.LOSS: -decision.stake,
@@ -197,6 +200,14 @@ def run_binary_backtest(
         trades=trades, initial_balance=initial_balance, final_balance=risk.balance,
         payout=config.payout, rejections=rejections, skipped_gaps=skipped_gaps,
     )
+
+
+def _unique_position(index: pd.DatetimeIndex, ts: pd.Timestamp) -> int | None:
+    """Position de ``ts`` dans l'index, ou None si absent ou en double."""
+    if ts not in index:
+        return None
+    pos = index.get_loc(ts)
+    return pos if isinstance(pos, int) else None
 
 
 def _outcome(direction: int, entry_price: float, exit_price: float) -> BinaryOutcome:
