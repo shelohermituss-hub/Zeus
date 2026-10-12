@@ -92,7 +92,7 @@ il se prouve. Quatre étapes, dans l'ordre :
      signalée dans le journal (`tick_value_loss incohérent...`) mérite
      vérification manuelle avant de continuer.
    - Compare le spread réel à celui supposé par le backtest Python
-     (`zeus/backtest/run_multi_symbol_propfirm.py`, colonne `spread quote`
+     (`zeus/backtest/research/run_multi_symbol_propfirm.py`, colonne `spread quote`
      de `SYMBOLS`) — un écart important dégradera la performance réelle
      même avec une logique de signal identique.
 

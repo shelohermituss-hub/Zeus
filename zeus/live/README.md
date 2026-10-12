@@ -73,4 +73,4 @@ paire sans groupe…) fait **refuser le démarrage** avec un message explicite.
 | 0.75% | +58% / +151% | 5.63% | marge fine sous la limite 6% |
 
 OOS juin 2026 : −0.2%, DD 1.13%, zéro breach.
-Scripts de reproduction : `zeus/backtest/run_multi_symbol_propfirm.py`.
+Scripts de reproduction : `zeus/backtest/research/run_multi_symbol_propfirm.py`.

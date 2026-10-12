@@ -42,6 +42,7 @@ Le code Python vit dans le package `zeus/`, découpé selon l'architecture ci-de
 - `zeus/risk/` : gestionnaire de risque, règles prop firm.
 - `zeus/orders/` et `zeus/exchange/` : modèles d'ordre, exécution, connecteurs (paper, live, MT5).
 - `zeus/backtest/` : moteurs de simulation réutilisables (engine, data_loader, walk_forward, monte_carlo, report).
+- `zeus/backtest/research/` : scripts d'étude et de sweep (`run_*.py`, lancés via `python -m zeus.backtest.research.run_xxx`) et leurs `*_FINDINGS.md`.
 - `zeus/paper/` : moteurs de paper trading.
 - `zeus/live/` : runner live (P11).
 - `zeus/monitoring/`, `zeus/utils/` : alertes, métriques, logs.
