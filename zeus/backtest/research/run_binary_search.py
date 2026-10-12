@@ -4,6 +4,11 @@ Recherche élargie options binaires (payout 92 %, écart d'exécution 0,2 pip).
 Six familles de stratégies × timeframes M5 / M15 / H1 × expirations de 1 à 3 bougies,
 sur tous les instruments disponibles (majeures, croisées, or).
 
+Les signaux émis pendant le rollover (20h-24h UTC) sont écartés : les données HistData
+sont des cotations bid, et l'élargissement du spread à cette heure y crée des pics
+artificiels qui « reviennent » mécaniquement. Sans ce filtre, le retour à la moyenne
+affiche 73-84 % de réussite sur ces heures, un artefact absent du flux Pocket Option.
+
 Protocole en trois temps, pour qu'un win rate élevé ne soit pas un artefact de sélection :
 1. Entraînement (2023-2024) : classement des configurations ; présélection si
    n >= MIN_TRAIN_TRADES, borne basse Wilson 95 % > seuil, et seuil battu sur
@@ -28,7 +33,7 @@ from zeus.backtest.binary_engine import BinaryBacktestConfig, BinaryOutcome, run
 from zeus.backtest.binary_evaluation import Tally, load_timeframe, pip_size, pool
 from zeus.risk.binary_risk import BinaryRiskConfig, BinaryRiskManager
 from zeus.strategy.binary_options import (
-    donchian, exhaustion, keltner_stretch, mean_reversion, momentum, rsi_pullback, to_signals,
+    donchian, exhaustion, in_utc_hours, keltner_stretch, mean_reversion, momentum, rsi_pullback, to_signals,
 )
 
 _ROOT = Path(__file__).parents[3]
@@ -40,6 +45,7 @@ BREAKEVEN = 1 / (1 + PAYOUT)
 SLIPPAGE_PIPS = 0.2
 TIMEFRAMES = [5, 15, 60]
 EXPIRY_BARS = [1, 2, 3]
+EXCLUDED_HOURS_UTC = (20, 24)   # rollover
 MIN_TRAIN_TRADES = 300
 MIN_VALIDATION_TRADES = 100
 MIN_SHARE_ABOVE_BREAKEVEN = 0.7
@@ -95,7 +101,8 @@ def evaluate_dataset(item: tuple[str, str, Path]) -> tuple[str, str, dict]:
     for tf in TIMEFRAMES:
         df = load_timeframe(path, tf)
         for vname, module, cfg in variants():
-            signals = to_signals(module.directions(df, cfg), vname)
+            directions = module.directions(df, cfg).where(~in_utc_hours(df.index, *EXCLUDED_HOURS_UTC), 0)
+            signals = to_signals(directions, vname)
             for bars in EXPIRY_BARS:
                 bt = BinaryBacktestConfig(payout=PAYOUT, bar_minutes=tf, expiry_minutes=tf * bars,
                                           entry_slippage=SLIPPAGE_PIPS * pip_size(symbol))

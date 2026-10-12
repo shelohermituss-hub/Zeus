@@ -46,3 +46,50 @@ Pas de trading réel. Le candidat passe en **paper trading obligatoire** avec me
 signal, de l'écart entre notre prix d'entrée et le prix d'exercice affiché par Pocket Option.
 Critère pour aller plus loin : écart médian ≤ 0,1 pip et win rate paper > 52,08 % sur au moins
 300 trades.
+
+---
+
+## Recherche élargie (`run_binary_search.py`) — artefact du rollover
+
+Six familles (Bollinger/RSI, pullback RSI(2) avec/sans tendance, épuisement de série,
+étirement Keltner avec/sans rejet, Donchian cassure/fade, momentum) × M5/M15/H1 ×
+expiration 1-3 bougies = 333 configurations, 42 jeux (18 instruments). Sélection
+2023-2024, validation 2025, contrôle 2026. Écart d'exécution 0,2 pip.
+
+### Premier passage : 60 % « validé »… par un artefact
+Bollinger 3σ + RSI(7) 15/85, M5, expiration 15 min : 61,4 % (2023-2024), 60,4 % (2025, n = 1 448).
+Le détail par heure UTC montre que tout l'avantage vient du **rollover (20h-23h UTC)** :
+
+| Heures UTC | Win rate | Trades |
+|---|---|---|
+| 20h | 72,6 % | 201 |
+| 21h | 84,3 % | 892 |
+| 22h | 83,2 % | 564 |
+| autres heures | ≈ 50 % | ≈ 4 000 |
+
+Les CSV HistData sont des cotations **bid** : à l'élargissement du spread du rollover, le bid
+plonge puis revient, ce qui crée des « excès » qui se résorbent mécaniquement. Les croisées
+(spread de rollover le plus large) affichaient les meilleurs scores. Cet effet n'existe pas sur
+un flux de prix moyen comme celui de Pocket Option. Résultats bruts conservés dans
+`data/results/binary_search_with_rollover.json`.
+
+Le candidat M1 de la première étude était touché aussi : 52,99 % toutes heures, **51,75 %**
+hors rollover (borne basse 50,3 %).
+
+### Second passage : rollover exclu (signaux 20h-24h UTC écartés)
+**0 configuration sur 333 présélectionnée.** Meilleure borne basse d'entraînement : 52,1 %
+(win rate 52,9 %), retombée à 49,3 % sur 2025. Toutes familles et timeframes confondus,
+les win rates 2025 sont entre 47 et 52 %.
+
+Filtres complémentaires testés sur le retour à la moyenne M5 (analyse ad hoc) :
+- régime de range (efficiency ratio 20 bougies, 5 tranches) : 50-52 % dans chaque tranche ;
+- confluence RSI H1 en excès dans le sens du pari : 52,1 % (train), 50,5 % (2025).
+
+### Conclusion
+Les indicateurs techniques classiques n'ont **aucun avantage exploitable** en options binaires
+forex/or de M1 à H1 une fois l'artefact du rollover retiré. Viser 60-70 % de réussite avec ces
+outils n'est pas réaliste : un tel score en backtest doit être traité comme un artefact jusqu'à
+preuve du contraire (contrôler d'abord la répartition horaire).
+
+Règle pour toute étude future sur ces données : **exclure 20h-24h UTC** et vérifier le win rate
+par heure avant de conclure.
