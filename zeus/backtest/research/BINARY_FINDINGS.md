@@ -41,7 +41,7 @@ Sensibilité du candidat (Bollinger 3σ, RSI 15/85, 5 min) au slippage d'entrée
 - 72 configurations testées : le candidat a été choisi a posteriori, le hors échantillon
   (156 trades) est trop petit pour le confirmer seul.
 
-## Décision
+## Décision (caduque, voir « Recherche élargie » : ce candidat dépendait du rollover)
 Pas de trading réel. Le candidat passe en **paper trading obligatoire** avec mesure, à chaque
 signal, de l'écart entre notre prix d'entrée et le prix d'exercice affiché par Pocket Option.
 Critère pour aller plus loin : écart médian ≤ 0,1 pip et win rate paper > 52,08 % sur au moins
